@@ -147,29 +147,36 @@ async function uploadImagesToStorage(zip: JSZip, templateId: string): Promise<Re
     return lower.includes("images/") && Object.keys(IMAGE_MIME).some((ext) => lower.endsWith(`.${ext}`));
   });
 
-  console.log(`[uploadImages] Uploading ${imageFiles.length} images to Firebase Storage`);
+  console.log(`[uploadImages] Uploading ${imageFiles.length} images to Firebase Storage (parallel)`);
 
-  for (const [path, file] of imageFiles) {
-    try {
-      const filename = path.split("/").pop()!;
-      const arrayBuffer = await file.async("arraybuffer");
-      const blob = new Blob([arrayBuffer], { type: getImageMime(filename) });
+  // ✅ Upload images in parallel with max 5 concurrent (prevents overwhelming network)
+  const MAX_CONCURRENT = 5;
+  for (let i = 0; i < imageFiles.length; i += MAX_CONCURRENT) {
+    const batch = imageFiles.slice(i, i + MAX_CONCURRENT);
+    await Promise.all(
+      batch.map(async ([path, file]) => {
+        try {
+          const filename = path.split("/").pop()!;
+          const arrayBuffer = await file.async("arraybuffer");
+          const blob = new Blob([arrayBuffer], { type: getImageMime(filename) });
 
-      // Upload to: templates/{templateId}/images/{filename}
-      const fileRef = ref(storage, `templates/${templateId}/images/${filename}`);
-      await uploadBytes(fileRef, blob);
-      const downloadUrl = await getDownloadURL(fileRef);
+          // Upload to: templates/{templateId}/images/{filename}
+          const fileRef = ref(storage, `templates/${templateId}/images/${filename}`);
+          await uploadBytes(fileRef, blob);
+          const downloadUrl = await getDownloadURL(fileRef);
 
-      // Store with multiple key variants
-      urlMap[path] = downloadUrl;
-      urlMap[`./images/${filename}`] = downloadUrl;
-      urlMap[`../images/${filename}`] = downloadUrl;
-      urlMap[filename] = downloadUrl;
+          // Store with multiple key variants
+          urlMap[path] = downloadUrl;
+          urlMap[`./images/${filename}`] = downloadUrl;
+          urlMap[`../images/${filename}`] = downloadUrl;
+          urlMap[filename] = downloadUrl;
 
-      console.log(`[uploadImages] ✅ Uploaded: ${filename}`);
-    } catch (err) {
-      console.warn(`[uploadImages] Failed to upload image: ${path}`, err);
-    }
+          console.log(`[uploadImages] ✅ Uploaded: ${filename}`);
+        } catch (err) {
+          console.warn(`[uploadImages] Failed to upload image: ${path}`, err);
+        }
+      }),
+    );
   }
 
   console.log(`[uploadImages] Final urlMap keys:`, Object.keys(urlMap));
