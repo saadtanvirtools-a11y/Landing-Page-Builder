@@ -1,6 +1,8 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from "react";
 import { useDraggable } from "@dnd-kit/core";
 import { useAuthStore } from "../../store/authStore";
+import { db } from "../../firebase";
+import { collection, getDocs, query, where } from "firebase/firestore";
 import type { ParsedBlock, Template, StandaloneBlock } from "../../types";
 
 // ── Block meta ─────────────────────────────────────────────
@@ -190,26 +192,13 @@ function StandaloneBlockCard({ block, isOnCanvas }: {
 }) {
   const { user } = useAuthStore();
 
-  // ── ✅ FIX: read fresh user record from mock_users so the id is always
-  //    in sync with what auth.ts saved (mock_users key, not lp_users).
-  //    Falls back to the zustand user if not found.
-  const freshUser = useMemo(() => {
-    try {
-      const all = JSON.parse(localStorage.getItem("mock_users") || "[]");
-      return all.find((u: any) => u.id === user?.id) ?? user;
-    } catch { return user; }
-  }, [user?.id]);
-
-  // ── Access logic ──────────────────────────────────────
-  // "free"    → never locked
-  // "premium" → always locked
-  // "custom"  → locked UNLESS freshUser.id is in allowedUserIds OR admin
+  // ✅ Access logic using Firestore user (from authStore)
   const isLocked = (() => {
     if (block.tier === "free")    return false;
     if (block.tier === "premium") return true;
     if (block.tier === "custom") {
-      if (freshUser?.role === "admin") return false;
-      return !(block.allowedUserIds ?? []).includes(freshUser?.id ?? "");
+      if (user?.role === "admin") return false;
+      return !(block.allowedUserIds ?? []).includes(user?.id ?? "");
     }
     return false;
   })();
@@ -311,21 +300,65 @@ export default function BlockPanel({
   canvasBlockIds,
   assignedTemplateId,
 }: BlockPanelProps) {
-  const [expandedType, setExpandedType] = useState<string | null>(null);
-  const [search, setSearch]             = useState("");
+  const [expandedType,      setExpandedType]      = useState<string | null>(null);
+  const [search,            setSearch]            = useState("");
 
-  const allTemplates: Template[] = useMemo(() => {
-    try {
-      const all: Template[] = JSON.parse(localStorage.getItem("lp_templates") || "[]");
-      if (assignedTemplateId) return all.filter((t) => t.id === assignedTemplateId);
-      return all;
-    } catch { return []; }
+  // ✅ Firestore state
+  const [allTemplates,      setAllTemplates]      = useState<Template[]>([]);
+  const [standaloneBlocks,  setStandaloneBlocks]  = useState<StandaloneBlock[]>([]);
+  const [loadingTemplates,  setLoadingTemplates]  = useState(true);
+  const [loadingBlocks,     setLoadingBlocks]     = useState(true);
+
+  // ✅ Load assigned template(s) from Firestore
+  useEffect(() => {
+    setLoadingTemplates(true);
+    const fetchTemplates = async () => {
+      try {
+        let templates: Template[] = [];
+        if (assignedTemplateId) {
+          // Only fetch the assigned template
+          const q    = query(collection(db, "templates"), where("__name__", "==", assignedTemplateId));
+          const snap = await getDocs(q);
+          // Fallback: getDoc by ID is cleaner — use getDocs on full collection filtered
+          if (snap.empty) {
+            // Try fetching all and filter (in case where() on __name__ isn't supported)
+            const allSnap = await getDocs(collection(db, "templates"));
+            templates = allSnap.docs
+              .map((d) => d.data() as Template)
+              .filter((t) => t.id === assignedTemplateId);
+          } else {
+            templates = snap.docs.map((d) => d.data() as Template);
+          }
+        } else {
+          const snap = await getDocs(collection(db, "templates"));
+          templates  = snap.docs.map((d) => d.data() as Template);
+        }
+        setAllTemplates(templates);
+      } catch (err) {
+        console.error("[BlockPanel] Failed to load templates:", err);
+        setAllTemplates([]);
+      } finally {
+        setLoadingTemplates(false);
+      }
+    };
+    fetchTemplates();
   }, [assignedTemplateId]);
 
-  const standaloneBlocks: StandaloneBlock[] = useMemo(() => {
-    try { return JSON.parse(localStorage.getItem("lp_blocks") || "[]"); }
-    catch { return []; }
+  // ✅ Load standalone blocks from Firestore
+  useEffect(() => {
+    setLoadingBlocks(true);
+    getDocs(collection(db, "blocks"))
+      .then((snap) => {
+        setStandaloneBlocks(snap.docs.map((d) => d.data() as StandaloneBlock));
+      })
+      .catch((err) => {
+        console.error("[BlockPanel] Failed to load blocks:", err);
+        setStandaloneBlocks([]);
+      })
+      .finally(() => setLoadingBlocks(false));
   }, []);
+
+  const isLoading = loadingTemplates || loadingBlocks;
 
   const groupedTemplateBlocks = useMemo(() => {
     const countPerType: Record<string, number>  = {};
@@ -384,7 +417,7 @@ export default function BlockPanel({
   const totalCount = allBlockTypes.reduce((acc, bt) =>
     acc + (groupedTemplateBlocks[bt]?.length || 0) + (groupedStandaloneBlocks[bt]?.length || 0), 0);
 
-  const isEmpty = allTemplates.length === 0 && standaloneBlocks.length === 0;
+  const isEmpty = !isLoading && allTemplates.length === 0 && standaloneBlocks.length === 0;
 
   return (
     <div className="w-64 bg-white border-r border-gray-100 flex flex-col h-full overflow-hidden">
@@ -424,6 +457,15 @@ export default function BlockPanel({
       {/* Block list */}
       <div className="flex-1 overflow-y-auto px-3 pb-3 space-y-2 pt-1">
 
+        {/* Loading state */}
+        {isLoading && (
+          <div className="flex flex-col items-center justify-center py-12 text-center">
+            <div className="w-7 h-7 border-2 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-3" />
+            <p className="text-xs text-gray-400">Loading blocks...</p>
+          </div>
+        )}
+
+        {/* Empty state */}
         {isEmpty && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <div className="text-4xl mb-2">📭</div>
@@ -432,13 +474,15 @@ export default function BlockPanel({
           </div>
         )}
 
-        {!isEmpty && filteredBlockTypes.length === 0 && (
+        {/* No search results */}
+        {!isLoading && !isEmpty && filteredBlockTypes.length === 0 && (
           <div className="text-center py-8">
             <p className="text-sm text-gray-300">No blocks match "{search}"</p>
           </div>
         )}
 
-        {filteredBlockTypes.map((blockType) => {
+        {/* Block type groups */}
+        {!isLoading && filteredBlockTypes.map((blockType) => {
           const meta         = BLOCK_META[blockType] || { label: blockType, icon: "📦" };
           const isExpanded   = expandedType === blockType;
           const tOptions     = groupedTemplateBlocks[blockType]   || [];

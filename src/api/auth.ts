@@ -1,177 +1,130 @@
-import axios from 'axios';
-import type { ApiResponse, AuthResponse, LoginPayload, SignupPayload } from '../types';
+import {
+  collection, doc, getDocs, getDoc,
+  setDoc, query, where, updateDoc,
+} from "firebase/firestore";
+import { db } from "../firebase";
+import type { ApiResponse, AuthResponse, LoginPayload, SignupPayload } from "../types";
 
+// ─────────────────────────────────────────────────────────
+// COLLECTION NAMES
+// ─────────────────────────────────────────────────────────
+const USERS_COL = "users";
 
-// ============================================
-// MOCK MODE — Remove this when backend is ready
-// ============================================
-const MOCK_MODE = true;
+// ─────────────────────────────────────────────────────────
+// SEED ADMIN — creates admin account if it doesn't exist
+// Called once on app load from main.tsx
+// ─────────────────────────────────────────────────────────
+export async function seedAdminIfNeeded(): Promise<void> {
+  try {
+    const adminRef = doc(db, USERS_COL, "admin_001");
+    const snap     = await getDoc(adminRef);
+    if (!snap.exists()) {
+      await setDoc(adminRef, {
+        id                  : "admin_001",
+        name                : "Admin",
+        email               : "admin@test.com",
+        password            : "admin123",
+        role                : "admin",
+        createdAt           : new Date().toISOString(),
+        assignedTemplateId  : null,
+        assignedTemplateName: null,
+      });
+      console.log("[Auth] Admin seeded to Firestore");
+    }
+  } catch (e) {
+    console.error("[Auth] seedAdmin error:", e);
+  }
+}
 
-// ============================================
-// MOCK USERS — Admin + Test User (pre-seeded)
-// ============================================
-export const MOCK_USERS = [
-  {
-    id       : 'admin_001',
-    name     : 'Admin',
-    email    : 'admin@test.com',
-    password : 'admin123',
-    role     : 'admin' as const,
-    createdAt              : new Date().toISOString(),
-    assignedTemplateId     : null,
-    assignedTemplateName   : null,
-  },
-  {
-    id       : 'user_001',
-    name     : 'Test User',
-    email    : 'user@test.com',
-    password : 'user123',
-    role     : 'user' as const,
-    createdAt              : new Date().toISOString(),
-    assignedTemplateId     : null,
-    assignedTemplateName   : null,
-  },
-];
+// ─────────────────────────────────────────────────────────
+// GET ALL USERS — used by admin panel
+// ─────────────────────────────────────────────────────────
+export async function getAllUsers(): Promise<any[]> {
+  const snap = await getDocs(collection(db, USERS_COL));
+  return snap.docs.map((d) => {
+    const data = d.data();
+    const { password, ...safe } = data;
+    return safe;
+  });
+}
 
-// ============================================
-// MOCK DB — localStorage helpers
-// ============================================
+// ─────────────────────────────────────────────────────────
+// UPDATE USER — used by AssignTemplate
+// ─────────────────────────────────────────────────────────
+export async function updateUserInDb(
+  userId: string,
+  updates: Partial<{ assignedTemplateId: string | null; assignedTemplateName: string | null }>
+): Promise<void> {
+  const ref = doc(db, USERS_COL, userId);
+  await updateDoc(ref, updates);
+}
 
-// ── Get all users (pre-seeded + registered) ─
-const getMockUsers = () => {
-  const raw = localStorage.getItem('mock_users');
-  if (raw) return JSON.parse(raw);
-
-  // First time — seed the default users
-  saveMockUsers(MOCK_USERS);
-  return MOCK_USERS;
-};
-
-const saveMockUsers = (users: any[]) => {
-  localStorage.setItem('mock_users', JSON.stringify(users));
-};
-
-// ── Mock Signup ────────────────────────────────────
-const mockSignup = (payload: SignupPayload): AuthResponse => {
-  const users = getMockUsers();
+// ─────────────────────────────────────────────────────────
+// SIGNUP
+// ─────────────────────────────────────────────────────────
+export const signupApi = async (payload: SignupPayload): Promise<AuthResponse> => {
+  await new Promise((r) => setTimeout(r, 400)); // simulate delay
 
   // Check if email already exists
-  const exists = users.find((u: any) => u.email === payload.email);
-  if (exists) {
-    throw { response: { data: { message: 'Email already registered' } } };
+  const q    = query(collection(db, USERS_COL), where("email", "==", payload.email));
+  const snap = await getDocs(q);
+  if (!snap.empty) {
+    throw { response: { data: { message: "Email already registered" } } };
   }
 
   // Create new user
   const newUser = {
-    id       : `user_${Date.now()}`,
-    name     : payload.name,
-    email    : payload.email,
-    password : payload.password,   // in real backend this would be hashed
-    role     : 'user' as const,
-    createdAt              : new Date().toISOString(),
-    assignedTemplateId     : null,
-    assignedTemplateName   : null,
+    id                  : `user_${Date.now()}`,
+    name                : payload.name,
+    email               : payload.email,
+    password            : payload.password,
+    role                : "user" as const,
+    createdAt           : new Date().toISOString(),
+    assignedTemplateId  : null,
+    assignedTemplateName: null,
   };
 
-  // Save to mock DB
-  users.push(newUser);
-  saveMockUsers(users);
+  await setDoc(doc(db, USERS_COL, newUser.id), newUser);
 
-  // Return token + user (without password)
   const { password, ...userWithoutPassword } = newUser;
   return {
-    token : `mock_token_${newUser.id}`,
-    user  : userWithoutPassword,
+    token: `mock_token_${newUser.id}`,
+    user : userWithoutPassword,
   };
 };
 
-// ── Mock Login ─────────────────────────────────────
-const mockLogin = (payload: LoginPayload): AuthResponse => {
-  const users = getMockUsers();
+// ─────────────────────────────────────────────────────────
+// LOGIN
+// ─────────────────────────────────────────────────────────
+export const loginApi = async (payload: LoginPayload): Promise<AuthResponse> => {
+  await new Promise((r) => setTimeout(r, 400));
 
-  // Find user by email
-  const user = users.find((u: any) => u.email === payload.email);
+  const q    = query(collection(db, USERS_COL), where("email", "==", payload.email));
+  const snap = await getDocs(q);
 
-  // Wrong email
-  if (!user) {
-    throw { response: { data: { message: 'No account found with this email' } } };
+  if (snap.empty) {
+    throw { response: { data: { message: "No account found with this email" } } };
   }
 
-  // Wrong password
-  if (user.password !== payload.password) {
-    throw { response: { data: { message: 'Incorrect password' } } };
+  const userDoc  = snap.docs[0].data();
+  if (userDoc.password !== payload.password) {
+    throw { response: { data: { message: "Incorrect password" } } };
   }
 
-  // Success — return token + user
-  const { password, ...userWithoutPassword } = user;
+  const { password, ...userWithoutPassword } = userDoc;
   return {
-    token : `mock_token_${user.id}`,
-    user  : userWithoutPassword,
+    token: `mock_token_${userDoc.id}`,
+    user : userWithoutPassword as AuthResponse["user"],
   };
 };
 
-// ============================================
-// REAL API SETUP (used when MOCK_MODE = false)
-// ============================================
-
-const API_BASE = 'http://localhost:3000/api';
-
-const api = axios.create({
-  baseURL : API_BASE,
-  headers : { 'Content-Type': 'application/json' },
-});
-
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
-// ============================================
-// EXPORTED API FUNCTIONS
-// ============================================
-
-export const loginApi = async (
-  payload: LoginPayload
-): Promise<AuthResponse> => {
-  if (MOCK_MODE) {
-    // Simulate network delay
-    await new Promise((r) => setTimeout(r, 800));
-    return mockLogin(payload);
-  }
-  const response = await api.post<ApiResponse<AuthResponse>>(
-    '/auth/login',
-    payload
-  );
-  return response.data.data;
+// ─────────────────────────────────────────────────────────
+// GET ME — restore session
+// ─────────────────────────────────────────────────────────
+export const getMeApi = async (): Promise<AuthResponse["user"]> => {
+  const userStr = localStorage.getItem("user");
+  if (userStr) return JSON.parse(userStr);
+  throw new Error("Not authenticated");
 };
 
-export const signupApi = async (
-  payload: SignupPayload
-): Promise<AuthResponse> => {
-  if (MOCK_MODE) {
-    await new Promise((r) => setTimeout(r, 800));
-    return mockSignup(payload);
-  }
-  const response = await api.post<ApiResponse<AuthResponse>>(
-    '/auth/signup',
-    payload
-  );
-  return response.data.data;
-};
-
-export const getMeApi = async (): Promise<AuthResponse['user']> => {
-  if (MOCK_MODE) {
-    const userStr = localStorage.getItem('user');
-    if (userStr) return JSON.parse(userStr);
-    throw new Error('Not authenticated');
-  }
-  const response = await api.get<ApiResponse<AuthResponse['user']>>(
-    '/auth/me'
-  );
-  return response.data.data;
-};
-
-export default api;
+export default { loginApi, signupApi, getMeApi };

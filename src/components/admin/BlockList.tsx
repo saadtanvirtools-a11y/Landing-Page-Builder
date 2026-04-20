@@ -1,23 +1,40 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Trash2, MoreVertical, Blocks, Crown, Gift, Search, RefreshCw, AlertTriangle, Users } from "lucide-react";
+import { db } from "../../firebase";
+import { collection, getDocs, deleteDoc, doc, updateDoc } from "firebase/firestore";
 import type { StandaloneBlock, BlockTier, User } from "../../types";
 
 const BLOCK_META: Record<string, { label: string; icon: string }> = {
-  hero: { label: "Hero", icon: "🦸" }, features: { label: "Features", icon: "⚡" },
-  benefits: { label: "Benefits", icon: "✅" }, faq: { label: "FAQ", icon: "❓" },
-  testimonials: { label: "Testimonials", icon: "💬" }, cta: { label: "CTA", icon: "🎯" },
-  "cta-banner": { label: "CTA Banner", icon: "🎯" }, footer: { label: "Footer", icon: "🔗" },
-  navbar: { label: "Navbar", icon: "🔝" }, pricing: { label: "Pricing", icon: "💰" },
-  contact: { label: "Contact", icon: "📬" }, "how-it-works": { label: "How It Works", icon: "🔄" },
-  other: { label: "Other", icon: "📦" },
+  hero:           { label: "Hero",         icon: "🦸" },
+  features:       { label: "Features",     icon: "⚡" },
+  benefits:       { label: "Benefits",     icon: "✅" },
+  faq:            { label: "FAQ",          icon: "❓" },
+  testimonials:   { label: "Testimonials", icon: "💬" },
+  cta:            { label: "CTA",          icon: "🎯" },
+  "cta-banner":   { label: "CTA Banner",   icon: "🎯" },
+  footer:         { label: "Footer",       icon: "🔗" },
+  navbar:         { label: "Navbar",       icon: "🔝" },
+  pricing:        { label: "Pricing",      icon: "💰" },
+  contact:        { label: "Contact",      icon: "📬" },
+  "how-it-works": { label: "How It Works", icon: "🔄" },
+  other:          { label: "Other",        icon: "📦" },
 };
 
-// ✅ FIXED: reads from "mock_users" (same key your auth.ts uses)
-function loadUsers(): User[] {
+// ✅ Load users from Firestore
+async function loadUsersFromFirestore(): Promise<User[]> {
   try {
-    return JSON.parse(localStorage.getItem("mock_users") || "[]")
-      .filter((u: any) => u.role !== "admin")
-      .map(({ password, ...u }: any) => u);
+    const snap = await getDocs(collection(db, "users"));
+    return snap.docs
+      .map((d) => { const { password, ...u } = d.data() as any; return u as User; })
+      .filter((u) => u.role !== "admin");
+  } catch { return []; }
+}
+
+// ✅ Load blocks from Firestore
+async function loadBlocksFromFirestore(): Promise<StandaloneBlock[]> {
+  try {
+    const snap = await getDocs(collection(db, "blocks"));
+    return snap.docs.map((d) => d.data() as StandaloneBlock);
   } catch { return []; }
 }
 
@@ -42,9 +59,9 @@ function TierBadge({ tier }: { tier: BlockTier }) {
 function BlockPreview({ block }: { block: StandaloneBlock }) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const iframeRef  = useRef<HTMLIFrameElement>(null);
-  const [scale, setScale]                 = useState(0.25);
+  const [scale,         setScale]         = useState(0.25);
   const [contentHeight, setContentHeight] = useState(300);
-  const [loaded, setLoaded]               = useState(false);
+  const [loaded,        setLoaded]        = useState(false);
 
   const cssVarBlock = Object.entries(block.cssVariables).map(([k, v]) => `  ${k}: ${v};`).join("\n");
   const srcDoc = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
@@ -68,13 +85,14 @@ function BlockPreview({ block }: { block: StandaloneBlock }) {
     if (!iframe) return;
     const measure = () => {
       try {
-        const doc = iframe.contentDocument;
-        if (!doc) { setLoaded(true); return; }
-        const h = Math.max(doc.body.scrollHeight, doc.body.offsetHeight, doc.documentElement.scrollHeight);
+        const d = iframe.contentDocument;
+        if (!d) { setLoaded(true); return; }
+        const h = Math.max(d.body.scrollHeight, d.body.offsetHeight, d.documentElement.scrollHeight);
         if (h > 10) { setContentHeight(h); setLoaded(true); }
       } catch { setLoaded(true); }
     };
-    const t1 = setTimeout(measure, 300); const t2 = setTimeout(measure, 900);
+    const t1 = setTimeout(measure, 300);
+    const t2 = setTimeout(measure, 900);
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, []);
 
@@ -115,9 +133,7 @@ function DeleteModal({ block, onConfirm, onCancel }: { block: StandaloneBlock; o
   );
 }
 
-function AccessModal({
-  block, allUsers, onSave, onClose,
-}: {
+function AccessModal({ block, allUsers, onSave, onClose }: {
   block: StandaloneBlock; allUsers: User[];
   onSave: (id: string, tier: BlockTier, allowedUserIds: string[]) => void;
   onClose: () => void;
@@ -130,8 +146,8 @@ function AccessModal({
   }
 
   const tierOptions: { value: BlockTier; emoji: string; label: string; desc: string }[] = [
-    { value: "free",    emoji: "🆓", label: "Free",    desc: "All users" },
-    { value: "premium", emoji: "🔒", label: "Premium", desc: "Locked"    },
+    { value: "free",    emoji: "🆓", label: "Free",    desc: "All users"  },
+    { value: "premium", emoji: "🔒", label: "Premium", desc: "Locked"     },
     { value: "custom",  emoji: "👤", label: "Custom",  desc: "Pick users" },
   ];
 
@@ -142,7 +158,6 @@ function AccessModal({
           <p className="text-base font-bold text-gray-800">🔐 Manage Access</p>
           <p className="text-xs text-gray-400 mt-0.5 truncate">{block.blockName}</p>
         </div>
-
         <div>
           <p className="text-xs font-bold text-gray-600 mb-2 uppercase tracking-wider">Access Tier</p>
           <div className="grid grid-cols-3 gap-2">
@@ -161,31 +176,24 @@ function AccessModal({
             ))}
           </div>
         </div>
-
         {tier === "custom" && (
           <div className="border border-indigo-100 rounded-xl overflow-hidden">
             <div className="px-4 py-2.5 bg-indigo-50 border-b border-indigo-100 flex items-center justify-between">
               <p className="text-xs font-bold text-indigo-700">Select Allowed Users</p>
               <div className="flex gap-2">
-                <button type="button" onClick={() => setAllowedUserIds(allUsers.map((u) => u.id))}
-                  className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">All</button>
+                <button type="button" onClick={() => setAllowedUserIds(allUsers.map((u) => u.id))} className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">All</button>
                 <span className="text-indigo-200">|</span>
-                <button type="button" onClick={() => setAllowedUserIds([])}
-                  className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">None</button>
+                <button type="button" onClick={() => setAllowedUserIds([])} className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">None</button>
               </div>
             </div>
             <div className="max-h-48 overflow-y-auto divide-y divide-gray-50">
               {allUsers.length === 0 ? (
-                <div className="px-4 py-6 text-center">
-                  <p className="text-xs text-gray-400">No users found</p>
-                </div>
+                <div className="px-4 py-6 text-center"><p className="text-xs text-gray-400">No users found</p></div>
               ) : allUsers.map((user) => {
                 const checked = allowedUserIds.includes(user.id);
                 return (
-                  <label key={user.id}
-                    className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${checked ? "bg-indigo-50" : "bg-white hover:bg-gray-50"}`}>
-                    <input type="checkbox" checked={checked} onChange={() => toggleUser(user.id)}
-                      className="w-4 h-4 rounded accent-indigo-600" />
+                  <label key={user.id} className={`flex items-center gap-3 px-4 py-2.5 cursor-pointer transition-colors ${checked ? "bg-indigo-50" : "bg-white hover:bg-gray-50"}`}>
+                    <input type="checkbox" checked={checked} onChange={() => toggleUser(user.id)} className="w-4 h-4 rounded accent-indigo-600" />
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold text-gray-700 truncate">{user.name}</p>
                       <p className="text-xs text-gray-400 truncate">{user.email}</p>
@@ -197,19 +205,13 @@ function AccessModal({
             </div>
             {allowedUserIds.length > 0 && (
               <div className="px-4 py-2 bg-indigo-50 border-t border-indigo-100">
-                <p className="text-xs text-indigo-600 font-medium">
-                  {allowedUserIds.length} user{allowedUserIds.length !== 1 ? "s" : ""} selected
-                </p>
+                <p className="text-xs text-indigo-600 font-medium">{allowedUserIds.length} user{allowedUserIds.length !== 1 ? "s" : ""} selected</p>
               </div>
             )}
           </div>
         )}
-
         <div className="flex gap-3">
-          <button onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-500 hover:bg-gray-50 transition">
-            Cancel
-          </button>
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-500 hover:bg-gray-50 transition">Cancel</button>
           <button onClick={() => onSave(block.id, tier, tier === "custom" ? allowedUserIds : [])}
             className="flex-1 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold transition shadow-sm">
             Save Access
@@ -220,9 +222,7 @@ function AccessModal({
   );
 }
 
-function BlockCard({
-  block, allUsers, onDelete, onUpdateAccess,
-}: {
+function BlockCard({ block, allUsers, onDelete, onUpdateAccess }: {
   block: StandaloneBlock; allUsers: User[];
   onDelete: (id: string) => void;
   onUpdateAccess: (id: string, tier: BlockTier, allowedUserIds: string[]) => void;
@@ -249,7 +249,6 @@ function BlockCard({
           onSave={(id, tier, allowedUserIds) => { onUpdateAccess(id, tier, allowedUserIds); setShowAccessModal(false); }}
           onClose={() => setShowAccessModal(false)} />
       )}
-
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
         <div className="px-4 pt-4 pb-3 flex items-start justify-between gap-2">
           <div className="flex items-center gap-2.5 min-w-0">
@@ -260,8 +259,7 @@ function BlockCard({
             </div>
           </div>
           <div className="relative shrink-0">
-            <button onClick={() => setMenuOpen((o) => !o)}
-              className="p-1.5 rounded-lg hover:bg-gray-100 transition text-gray-400">
+            <button onClick={() => setMenuOpen((o) => !o)} className="p-1.5 rounded-lg hover:bg-gray-100 transition text-gray-400">
               <MoreVertical size={15} />
             </button>
             {menuOpen && (
@@ -278,7 +276,6 @@ function BlockCard({
             )}
           </div>
         </div>
-
         <div className="px-4 pb-2 flex items-center gap-2 flex-wrap">
           <TierBadge tier={block.tier} />
           <span className="text-xs text-gray-300">·</span>
@@ -288,7 +285,6 @@ function BlockCard({
           <span className="text-xs text-gray-300">·</span>
           <span className="text-xs text-gray-400">{block.createdAt}</span>
         </div>
-
         {block.tier === "custom" && (
           <div className="px-4 pb-3">
             <div className="flex items-center gap-1.5 flex-wrap">
@@ -308,7 +304,6 @@ function BlockCard({
             </div>
           </div>
         )}
-
         <div className="px-4 pb-4">
           <button onClick={() => setShowPreview((p) => !p)}
             className="w-full py-2 rounded-xl border border-gray-200 text-xs font-semibold text-gray-500 hover:bg-gray-50 hover:border-indigo-200 hover:text-indigo-600 transition flex items-center justify-center gap-1.5">
@@ -335,28 +330,43 @@ export default function BlockList({ refresh }: Props) {
   const [filterTier, setFilterTier] = useState<"all" | BlockTier>("all");
   const [filterType, setFilterType] = useState("all");
 
-  function loadBlocks() {
+  // ✅ Load from Firestore
+  async function loadData() {
     setLoading(true);
-    setTimeout(() => {
-      try { setBlocks(JSON.parse(localStorage.getItem("lp_blocks") || "[]")); }
-      catch { setBlocks([]); }
-      setAllUsers(loadUsers());   // ✅ now reads mock_users correctly
+    try {
+      const [blocksData, usersData] = await Promise.all([
+        loadBlocksFromFirestore(),
+        loadUsersFromFirestore(),
+      ]);
+      setBlocks(blocksData);
+      setAllUsers(usersData);
+    } catch (err) {
+      console.error("Failed to load:", err);
+    } finally {
       setLoading(false);
-    }, 300);
+    }
   }
 
-  useEffect(() => { loadBlocks(); }, [refresh]);
+  useEffect(() => { loadData(); }, [refresh]);
 
-  function handleDelete(id: string) {
-    const updated = blocks.filter((b) => b.id !== id);
-    setBlocks(updated);
-    localStorage.setItem("lp_blocks", JSON.stringify(updated));
+  // ✅ Delete from Firestore
+  async function handleDelete(id: string) {
+    try {
+      await deleteDoc(doc(db, "blocks", id));
+      setBlocks((prev) => prev.filter((b) => b.id !== id));
+    } catch (err) {
+      console.error("Delete failed:", err);
+    }
   }
 
-  function handleUpdateAccess(id: string, tier: BlockTier, allowedUserIds: string[]) {
-    const updated = blocks.map((b) => b.id === id ? { ...b, tier, allowedUserIds } : b);
-    setBlocks(updated);
-    localStorage.setItem("lp_blocks", JSON.stringify(updated));
+  // ✅ Update access in Firestore
+  async function handleUpdateAccess(id: string, tier: BlockTier, allowedUserIds: string[]) {
+    try {
+      await updateDoc(doc(db, "blocks", id), { tier, allowedUserIds });
+      setBlocks((prev) => prev.map((b) => b.id === id ? { ...b, tier, allowedUserIds } : b));
+    } catch (err) {
+      console.error("Update access failed:", err);
+    }
   }
 
   const filtered = blocks.filter((b) => {
@@ -383,6 +393,7 @@ export default function BlockList({ refresh }: Props) {
 
   return (
     <div className="space-y-5">
+      {/* Stats */}
       <div className="grid grid-cols-4 gap-4">
         {[
           { label: "Total",      value: blocks.length,  color: "text-indigo-600", bg: "bg-indigo-50",  border: "border-indigo-100" },
@@ -397,6 +408,7 @@ export default function BlockList({ refresh }: Props) {
         ))}
       </div>
 
+      {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
         <div className="relative flex-1 min-w-48">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300" />
@@ -415,11 +427,12 @@ export default function BlockList({ refresh }: Props) {
           <option value="all">All Types</option>
           {blockTypes.map((t) => <option key={t} value={t}>{BLOCK_META[t]?.icon ?? "📦"} {BLOCK_META[t]?.label ?? t}</option>)}
         </select>
-        <button onClick={loadBlocks} className="p-2 rounded-xl border border-gray-200 text-gray-400 hover:bg-gray-50 hover:text-indigo-600 transition" title="Refresh">
+        <button onClick={loadData} className="p-2 rounded-xl border border-gray-200 text-gray-400 hover:bg-gray-50 hover:text-indigo-600 transition" title="Refresh">
           <RefreshCw size={15} />
         </button>
       </div>
 
+      {/* Block Grid */}
       {blocks.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 text-gray-300 bg-white rounded-2xl border border-gray-100">
           <Blocks size={52} className="mb-3 opacity-40" />
