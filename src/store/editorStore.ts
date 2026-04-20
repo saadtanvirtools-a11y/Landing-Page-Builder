@@ -3,8 +3,9 @@ import { db } from "../firebase";
 import { doc, getDoc } from "firebase/firestore";
 import type { Template, ParsedBlock, PageScripts, BlockInstance } from "../types";
 
-// ── All helper functions unchanged ──────────────────────
-
+// ─────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────
 function swapBlockInRawHtml(fullHtml: string, blockId: string, newBlockHtml: string): string {
   const parser = new DOMParser();
   const doc2   = parser.parseFromString(fullHtml, "text/html");
@@ -49,27 +50,27 @@ function reparseBlockFromOwnHtml(blockHtml: string, blockId: string): {
   colorVars: Record<string, string>;
   styles: { bgColor?: string; textSize?: string; fontWeight?: string };
 } {
-  const parser  = new DOMParser();
-  const doc2    = parser.parseFromString(blockHtml, "text/html");
-  const el      = doc2.querySelector(`[data-block="${blockId}"]`);
+  const parser = new DOMParser();
+  const doc2   = parser.parseFromString(blockHtml, "text/html");
+  const el     = doc2.querySelector(`[data-block="${blockId}"]`);
   if (!el) return { editables: [], colorVars: {}, styles: {} };
 
   const colorVars = parseColorVarsAttr(el.getAttribute("data-color-vars") || "");
   const editables = Array.from(el.querySelectorAll("[data-editable]")).map((e) => {
-    const id         = e.getAttribute("data-editable") || "";
-    const type       = e.getAttribute("data-editable-type") || "text";
-    const styleId    = e.getAttribute("data-style-id") || "";
-    const styleProps = (e.getAttribute("data-style-props") || "").split(",").map((s) => s.trim()).filter(Boolean).join(",");
+    const id           = e.getAttribute("data-editable") || "";
+    const type         = e.getAttribute("data-editable-type") || "text";
+    const styleId      = e.getAttribute("data-style-id") || "";
+    const styleProps   = (e.getAttribute("data-style-props") || "").split(",").map((s) => s.trim()).filter(Boolean).join(",");
     const colorVarsRaw = e.getAttribute("data-color-vars") || "";
-    const content    = type === "image" ? e.getAttribute("src") || "" : (e.textContent || "").trim();
+    const content      = type === "image" ? e.getAttribute("src") || "" : (e.textContent || "").trim();
     const { tailwindClass, styleChildSelector } = readTailwindClass(e);
     return { id, type: type as "text" | "image" | "link", content, colorVars: parseColorVarsAttr(colorVarsRaw), tailwindClass, styleProps, styleId, styleChildSelector };
   });
 
   const inlineStyle = (el as HTMLElement).style;
   const styles: { bgColor?: string; textSize?: string; fontWeight?: string } = {};
-  if (inlineStyle.backgroundColor) styles.bgColor  = inlineStyle.backgroundColor;
-  if (inlineStyle.fontSize)        styles.textSize  = inlineStyle.fontSize;
+  if (inlineStyle.backgroundColor) styles.bgColor   = inlineStyle.backgroundColor;
+  if (inlineStyle.fontSize)        styles.textSize   = inlineStyle.fontSize;
   if (inlineStyle.fontWeight)      styles.fontWeight = inlineStyle.fontWeight;
 
   return { editables, colorVars, styles };
@@ -94,8 +95,8 @@ function reparseBlock(fullHtml: string, blockId: string): Partial<ParsedBlock> {
 
   const inlineStyle = (el as HTMLElement).style;
   const styles: { bgColor?: string; textSize?: string; fontWeight?: string } = {};
-  if (inlineStyle.backgroundColor) styles.bgColor  = inlineStyle.backgroundColor;
-  if (inlineStyle.fontSize)        styles.textSize  = inlineStyle.fontSize;
+  if (inlineStyle.backgroundColor) styles.bgColor   = inlineStyle.backgroundColor;
+  if (inlineStyle.fontSize)        styles.textSize   = inlineStyle.fontSize;
   if (inlineStyle.fontWeight)      styles.fontWeight = inlineStyle.fontWeight;
 
   return { editables, rawHtml: el.outerHTML, colorVars: wrapperColorVars, styles };
@@ -111,7 +112,7 @@ function scopeBlockCssVars(blockHtml: string, blockId: string, sourceCssVars: Re
   const scopedCssVars: Record<string, string> = {};
   Object.entries(sourceCssVars).forEach(([varName, value]) => {
     const scopedName = varName.replace("--", `--${blockId}-`);
-    varRenameMap[varName]  = scopedName;
+    varRenameMap[varName]     = scopedName;
     scopedCssVars[scopedName] = value;
   });
   let scopedHtml = blockHtml;
@@ -178,7 +179,9 @@ function applyInlineStyleToBlockHtml(blockHtml: string, blockId: string, styleKe
   return "<!DOCTYPE html>\n" + doc2.documentElement.outerHTML;
 }
 
-// ── Types ────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// TYPES
+// ─────────────────────────────────────────────────────────────
 interface EditorState {
   currentTemplate : Template | null;
   selectedBlockId : string | null;
@@ -188,27 +191,30 @@ interface EditorState {
   lastSaved       : string | null;
   isSaving        : boolean;
 
-  loadTemplate          : (template: Template) => void;
-  selectBlock           : (blockId: string | null) => void;
-  addBlockToTemplate    : (block: ParsedBlock, insertAfterIndex?: number) => void;
+  loadTemplate           : (template: Template) => void;
+  selectBlock            : (blockId: string | null) => void;
+  addBlockToTemplate     : (block: ParsedBlock, insertAfterIndex?: number) => void;
   removeBlockFromTemplate: (blockId: string) => void;
-  updateEditable        : (editableId: string, newContent: string) => void;
-  updateCssVar          : (varName: string, newValue: string) => void;
-  updateClassSwap       : (editableId: string, newClassList: string) => void;
-  updateBlockStyle      : (blockId: string, styleKey: string, value: string) => void;
-  swapBlock             : (blockId: string, newBlock: ParsedBlock) => void;
-  reorderBlocks         : (activeId: string, overId: string) => void;
-  addBlock              : (block: BlockInstance) => void;
-  removeBlock           : (instanceId: string) => void;
-  updateBlockContent    : (instanceId: string, content: Record<string, any>) => void;
-  updateBlockStyles     : (instanceId: string, styles: Record<string, any>) => void;
-  saveToStorage         : (userId: string) => void;
-  loadFromStorage       : (userId: string) => void;
-  resetEditor           : () => void;
+  updateEditable         : (editableId: string, newContent: string) => void;
+  updateCssVar           : (varName: string, newValue: string) => void;
+  updateClassSwap        : (editableId: string, newClassList: string) => void;
+  updateBlockStyle       : (blockId: string, styleKey: string, value: string) => void;
+  swapBlock              : (blockId: string, newBlock: ParsedBlock) => void;
+  reorderBlocks          : (activeId: string, overId: string) => void;
+  addBlock               : (block: BlockInstance) => void;
+  removeBlock            : (instanceId: string) => void;
+  updateBlockContent     : (instanceId: string, content: Record<string, any>) => void;
+  updateBlockStyles      : (instanceId: string, styles: Record<string, any>) => void;
+  saveToStorage          : (userId: string) => void;
+  loadFromStorage        : (userId: string) => void;
+  resetEditor            : () => void;
 }
 
 const DEFAULT_SCRIPTS: PageScripts = { gtmId: "", headScripts: "", bodyScripts: "" };
 
+// ─────────────────────────────────────────────────────────────
+// STORE
+// ─────────────────────────────────────────────────────────────
 export const useEditorStore = create<EditorState>((set, get) => ({
   currentTemplate : null,
   selectedBlockId : null,
@@ -218,6 +224,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   lastSaved       : null,
   isSaving        : false,
 
+  // ✅ loadTemplate — preserves rawCss/rawJs from Firestore
   loadTemplate: (template) => {
     const reparsedBlocks = template.blocks.map((block) => {
       const reparsed = reparseBlock(template.rawHtml, block.blockId);
@@ -230,7 +237,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       };
     });
     set({
-      currentTemplate: { ...template, blocks: reparsedBlocks },
+      currentTemplate: {
+        ...template,           // ✅ rawCss + rawJs survive here
+        blocks: reparsedBlocks,
+      },
       templateName   : template.templateName,
       selectedBlockId: null,
       pageScripts    : template.pageScripts ?? DEFAULT_SCRIPTS,
@@ -239,7 +249,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   selectBlock: (blockId) => set({ selectedBlockId: blockId }),
 
-  // ✅ FIXED: reads template from Firestore instead of localStorage
   addBlockToTemplate: (block, insertAfterIndex) => {
     const { currentTemplate } = get();
     const base: Template = currentTemplate ?? {
@@ -253,13 +262,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       pageScripts : { gtmId: "", headScripts: "", bodyScripts: "" },
     };
 
-    let newBlocks    = [...base.blocks];
-    let freshRawHtml = block.rawHtml ?? "";
+    let newBlocks     = [...base.blocks];
+    let freshRawHtml  = block.rawHtml ?? "";
     let sourceCssVars: Record<string, string> = {};
-
     const isStandalone = !block.sourceTemplateId || block.sourceTemplateId.startsWith("standalone::");
 
-    // ✅ Fetch from Firestore asynchronously, then apply
     const applyBlock = (freshHtml: string, cssVars: Record<string, string>) => {
       const existsAlready = newBlocks.some((b) => b.blockId === block.blockId || b.blockId.startsWith(block.blockId + "_"));
       const uniqueBlockId = existsAlready ? `${block.blockId}_${Date.now()}` : block.blockId;
@@ -307,23 +314,28 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       };
 
       let insertAt: number;
-      if (insertAfterIndex === -1)        insertAt = 0;
+      if (insertAfterIndex === -1)             insertAt = 0;
       else if (insertAfterIndex === undefined) insertAt = newBlocks.length;
       else insertAt = Math.min(insertAfterIndex + 1, newBlocks.length);
 
       newBlocks.splice(insertAt, 0, { ...blockToInsert, blockOrder: insertAt + 1 });
-      const reordered    = newBlocks.map((b, i) => ({ ...b, blockOrder: i + 1 }));
-      const rebuiltHtml  = rebuildRawHtml(reordered, base.rawHtml);
-      const finalHtml    = injectCssVarsIntoHtml(rebuiltHtml, mergedCssVariables);
+      const reordered   = newBlocks.map((b, i) => ({ ...b, blockOrder: i + 1 }));
+      const rebuiltHtml = rebuildRawHtml(reordered, base.rawHtml);
+      const finalHtml   = injectCssVarsIntoHtml(rebuiltHtml, mergedCssVariables);
 
       set({
-        currentTemplate: { ...base, blocks: reordered, rawHtml: finalHtml, cssVariables: mergedCssVariables },
-        templateName   : base.templateName,
+        currentTemplate: {
+          ...base,
+          blocks      : reordered,
+          rawHtml     : finalHtml,
+          cssVariables: mergedCssVariables,
+          // ✅ rawCss/rawJs preserved — never touched by block operations
+        },
+        templateName: base.templateName,
       });
     };
 
     if (block.sourceTemplateId && !block.sourceTemplateId.startsWith("standalone::")) {
-      // ✅ Fetch source template from Firestore
       getDoc(doc(db, "templates", block.sourceTemplateId))
         .then((snap) => {
           if (snap.exists()) {
@@ -341,7 +353,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           applyBlock(freshRawHtml, sourceCssVars);
         });
     } else {
-      // Standalone block — no Firestore fetch needed
       if (block.sourceTemplateId?.startsWith("standalone::")) {
         sourceCssVars = (block as any).cssVariables ?? {};
       }
@@ -352,10 +363,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   removeBlockFromTemplate: (blockId) => {
     const { currentTemplate } = get();
     if (!currentTemplate) return;
-    const newBlocks   = currentTemplate.blocks.filter((b) => b.blockId !== blockId).map((b, i) => ({ ...b, blockOrder: i + 1 }));
-    const newRawHtml  = rebuildRawHtml(newBlocks, currentTemplate.rawHtml);
+    const newBlocks  = currentTemplate.blocks.filter((b) => b.blockId !== blockId).map((b, i) => ({ ...b, blockOrder: i + 1 }));
+    const newRawHtml = rebuildRawHtml(newBlocks, currentTemplate.rawHtml);
     set({
-      currentTemplate: { ...currentTemplate, blocks: newBlocks, rawHtml: newRawHtml },
+      currentTemplate: {
+        ...currentTemplate, // ✅ rawCss preserved
+        blocks : newBlocks,
+        rawHtml: newRawHtml,
+      },
       selectedBlockId: get().selectedBlockId === blockId ? null : get().selectedBlockId,
     });
   },
@@ -371,8 +386,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         const blockDoc = parser.parseFromString(block.rawHtml ?? "", "text/html");
         const el       = blockDoc.querySelector(`[data-editable="${editableId}"]`);
         if (el) {
-          if (editable.type === "image")      el.setAttribute("src", newContent);
-          else if (editable.type === "link")  el.setAttribute("href", newContent);
+          if (editable.type === "image")     el.setAttribute("src", newContent);
+          else if (editable.type === "link") el.setAttribute("href", newContent);
           else {
             const textNodes = Array.from(el.childNodes).filter((n) => n.nodeType === Node.TEXT_NODE);
             if (textNodes.length > 0) textNodes[0].textContent = newContent;
@@ -387,7 +402,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       });
       return {
         currentTemplate: {
-          ...currentTemplate,
+          ...currentTemplate, // ✅ rawCss preserved
           blocks : updatedBlocks,
           rawHtml: rebuildRawHtml(updatedBlocks, currentTemplate.rawHtml),
         },
@@ -401,14 +416,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const newCssVariables = { ...currentTemplate.cssVariables, [varName]: value };
       const rebuiltHtml     = rebuildRawHtml(currentTemplate.blocks, currentTemplate.rawHtml);
       const finalHtml       = injectCssVarsIntoHtml(rebuiltHtml, newCssVariables);
-      return { currentTemplate: { ...currentTemplate, cssVariables: newCssVariables, rawHtml: finalHtml } };
+      return {
+        currentTemplate: {
+          ...currentTemplate, // ✅ rawCss preserved
+          cssVariables: newCssVariables,
+          rawHtml     : finalHtml,
+        },
+      };
     }),
 
   updateClassSwap: (editableId, newClassList) => {
     const { currentTemplate } = get();
     if (!currentTemplate) return;
 
-    const RESPONSIVE_RE = /\b(?:sm|md|lg|xl|2xl):[\w/-]+\b/g;
+    const RESPONSIVE_RE  = /\b(?:sm|md|lg|xl|2xl):[\w/-]+\b/g;
     const cleanClassList = newClassList.replace(RESPONSIVE_RE, "").replace(/\s+/g, " ").trim();
 
     let block    = currentTemplate.blocks.find((b) => b.editables.some((e) => e.id === editableId));
@@ -445,14 +466,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
     const rebuiltHtml = rebuildRawHtml(updatedBlocks, currentTemplate.rawHtml);
     const finalHtml   = injectCssVarsIntoHtml(rebuiltHtml, currentTemplate.cssVariables ?? {});
-    set({ currentTemplate: { ...currentTemplate, blocks: updatedBlocks, rawHtml: finalHtml } });
+    set({
+      currentTemplate: {
+        ...currentTemplate, // ✅ rawCss preserved
+        blocks : updatedBlocks,
+        rawHtml: finalHtml,
+      },
+    });
   },
 
   updateBlockStyle: (blockId, styleKey, value) => {
     const { currentTemplate } = get();
     if (!currentTemplate) return;
     const stylePropMap: Record<string, string> = { backgroundColor: "bgColor", fontSize: "textSize", fontWeight: "fontWeight" };
-    const styleProp = stylePropMap[styleKey] || styleKey;
+    const styleProp     = stylePropMap[styleKey] || styleKey;
     const updatedBlocks = currentTemplate.blocks.map((block) => {
       if (block.blockId !== blockId) return block;
       return {
@@ -461,7 +488,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         styles : { ...(block.styles ?? {}), [styleProp]: value },
       };
     });
-    set({ currentTemplate: { ...currentTemplate, blocks: updatedBlocks, rawHtml: rebuildRawHtml(updatedBlocks, currentTemplate.rawHtml) } });
+    set({
+      currentTemplate: {
+        ...currentTemplate, // ✅ rawCss preserved
+        blocks : updatedBlocks,
+        rawHtml: rebuildRawHtml(updatedBlocks, currentTemplate.rawHtml),
+      },
+    });
   },
 
   swapBlock: (blockId, newBlock) => {
@@ -469,7 +502,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!currentTemplate) return;
     set({
       currentTemplate: {
-        ...currentTemplate,
+        ...currentTemplate, // ✅ rawCss preserved
         rawHtml: swapBlockInRawHtml(currentTemplate.rawHtml, blockId, newBlock.rawHtml),
         blocks : currentTemplate.blocks.map((b) => (b.blockId === blockId ? { ...newBlock } : b)),
       },
@@ -479,14 +512,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   reorderBlocks: (activeId, overId) => {
     const { currentTemplate, canvasBlocks } = get();
     if (currentTemplate) {
-      const blocks   = [...currentTemplate.blocks];
-      const fromIdx  = blocks.findIndex((b) => b.blockId === activeId);
-      const toIdx    = blocks.findIndex((b) => b.blockId === overId);
+      const blocks  = [...currentTemplate.blocks];
+      const fromIdx = blocks.findIndex((b) => b.blockId === activeId);
+      const toIdx   = blocks.findIndex((b) => b.blockId === overId);
       if (fromIdx === -1 || toIdx === -1) return;
-      const [moved]  = blocks.splice(fromIdx, 1);
+      const [moved] = blocks.splice(fromIdx, 1);
       blocks.splice(toIdx, 0, moved);
       const reordered = blocks.map((b, i) => ({ ...b, blockOrder: i + 1 }));
-      set({ currentTemplate: { ...currentTemplate, rawHtml: rebuildRawHtml(reordered, currentTemplate.rawHtml), blocks: reordered } });
+      set({
+        currentTemplate: {
+          ...currentTemplate, // ✅ rawCss preserved
+          rawHtml: rebuildRawHtml(reordered, currentTemplate.rawHtml),
+          blocks : reordered,
+        },
+      });
       return;
     }
     const fromIdx = canvasBlocks.findIndex((b) => b.instanceId === activeId);
@@ -503,18 +542,27 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   updateBlockContent: (instanceId, content) => set((s) => ({ canvasBlocks: s.canvasBlocks.map((b) => (b.instanceId === instanceId ? { ...b, content: { ...b.content, ...content } } : b)) })),
   updateBlockStyles : (instanceId, styles)  => set((s) => ({ canvasBlocks: s.canvasBlocks.map((b) => (b.instanceId === instanceId ? { ...b, styles: { ...b.styles, ...styles } } : b)) })),
 
+  // ✅ saveToStorage — explicitly preserves rawCss/rawJs
   saveToStorage: (userId) => {
     const { currentTemplate, canvasBlocks, pageScripts } = get();
     set({ isSaving: true });
     setTimeout(() => {
       try {
         let templateToSave = currentTemplate
-          ? { ...currentTemplate, blocks: currentTemplate.blocks.map((b) => ({ ...b, styles: b.styles ?? {} })) }
+          ? {
+              ...currentTemplate,                          // ✅ rawCss + rawJs included
+              blocks: currentTemplate.blocks.map((b) => ({ ...b, styles: b.styles ?? {} })),
+            }
           : null;
+
         if (templateToSave && templateToSave.blocks.length > 0) {
           const rebuilt  = rebuildRawHtml(templateToSave.blocks as ParsedBlock[], templateToSave.rawHtml);
-          templateToSave = { ...templateToSave, rawHtml: injectCssVarsIntoHtml(rebuilt, templateToSave.cssVariables ?? {}) };
+          templateToSave = {
+            ...templateToSave,                             // ✅ rawCss still here
+            rawHtml: injectCssVarsIntoHtml(rebuilt, templateToSave.cssVariables ?? {}),
+          };
         }
+
         localStorage.setItem(`editor_save_${userId}`, JSON.stringify({
           currentTemplate: templateToSave,
           canvasBlocks,
@@ -526,28 +574,27 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }, 400);
   },
 
-  // ✅ FIXED: fallback reads from Firestore instead of localStorage lp_templates
+  // ✅ loadFromStorage — rawCss restored from localStorage JSON
   loadFromStorage: (userId) => {
     try {
       const raw = localStorage.getItem(`editor_save_${userId}`);
       if (!raw) return;
-      const data           = JSON.parse(raw);
+      const data                          = JSON.parse(raw);
       const savedTemplate: Template | null = data.currentTemplate ?? null;
 
       if (savedTemplate) {
         const processBlocks = async () => {
           const processedBlocks = await Promise.all(
             savedTemplate.blocks.map(async (block) => {
-              // ✅ If block already has editables saved — use them as-is
+              // ✅ Block has editables saved — use as-is (rawCss is on template, not block)
               if (block.editables && block.editables.length > 0 && block.rawHtml) {
                 return { ...block, styles: block.styles ?? {} };
               }
 
-              // Only re-parse if editables are missing (legacy saves)
+              // Legacy: re-parse if editables missing
               let blockRawHtml = block.rawHtml;
               if (!blockRawHtml && block.sourceTemplateId && !block.sourceTemplateId.startsWith("standalone::")) {
                 try {
-                  // ✅ Fetch from Firestore instead of localStorage
                   const snap = await getDoc(doc(db, "templates", block.sourceTemplateId));
                   if (snap.exists()) {
                     const srcTemplate = snap.data() as Template;
@@ -568,12 +615,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             })
           );
 
-          savedTemplate.blocks = processedBlocks;
+          // ✅ savedTemplate already has rawCss from when it was saved
           set({
-            currentTemplate: savedTemplate,
+            currentTemplate: { ...savedTemplate, blocks: processedBlocks },
             canvasBlocks   : data.canvasBlocks ?? [],
             pageScripts    : data.pageScripts  ?? DEFAULT_SCRIPTS,
-            templateName   : savedTemplate?.templateName ?? null,
+            templateName   : savedTemplate.templateName ?? null,
             lastSaved      : data.savedAt ?? null,
           });
         };

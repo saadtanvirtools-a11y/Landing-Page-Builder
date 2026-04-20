@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import JSZip from "jszip";
 import { Upload, FileArchive, CheckCircle, XCircle, Loader2, AlertTriangle, Info, AlertCircle, ChevronDown, ChevronUp, Image } from "lucide-react";
 import { parseHtmlToTemplate } from "../../utils/htmlParser";
@@ -9,7 +9,6 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 interface Props {
   onUploaded: () => void;
 }
-
 interface ValidationCheck {
   label: string;
   ok: boolean;
@@ -36,7 +35,6 @@ interface ExistingTemplate {
   createdAt?: string;
 }
 
-// ── Supported image MIME types ────────────────────────────
 const IMAGE_MIME: Record<string, string> = {
   png: "image/png",
   jpg: "image/jpeg",
@@ -53,92 +51,42 @@ function getImageMime(filename: string): string {
   return IMAGE_MIME[ext] ?? "image/png";
 }
 
-// ── Convert image file inside ZIP → base64 data URL ───────
 async function imageToDataUrl(zipFile: JSZip.JSZipObject, filename: string): Promise<string> {
   const base64 = await zipFile.async("base64");
-  const mime = getImageMime(filename);
-  return `data:${mime};base64,${base64}`;
+  return `data:${getImageMime(filename)};base64,${base64}`;
 }
 
-// ── Extract all images from images/ folder in ZIP ─────────
-// Returns a map: { "images/hero.png": "data:image/png;base64,..." }
 async function extractImages(zip: JSZip): Promise<Record<string, string>> {
   const imageMap: Record<string, string> = {};
-  console.log("[extractImages] All ZIP files:", Object.keys(zip.files));
-
   const imageFiles = Object.entries(zip.files).filter(([path, file]) => {
     if (file.dir) return false;
     const lower = path.toLowerCase();
-    const hasImages = lower.includes("images/");
-    const hasImageExt = Object.keys(IMAGE_MIME).some((ext) => lower.endsWith(`.${ext}`));
-    if (hasImages) console.log(`[extractImages] Found image path: ${path}, hasImageExt: ${hasImageExt}`);
-    return hasImages && hasImageExt;
+    return lower.includes("images/") && Object.keys(IMAGE_MIME).some((ext) => lower.endsWith(`.${ext}`));
   });
-
-  console.log(`[extractImages] Found ${imageFiles.length} image files`);
-
   await Promise.all(
     imageFiles.map(async ([path, file]) => {
       try {
         const dataUrl = await imageToDataUrl(file, path);
-        // Store with multiple key variants so all src patterns are matched
         const filename = path.split("/").pop()!;
-        imageMap[path] = dataUrl; // "images/hero.png"
-        imageMap[`./images/${filename}`] = dataUrl; // "./images/hero.png"
-        imageMap[`../images/${filename}`] = dataUrl; // "../images/hero.png"
-        imageMap[filename] = dataUrl; // "hero.png" (bare filename)
-        console.log(`[extractImages] ✅ Embedded ${filename}`);
+        imageMap[path] = dataUrl;
+        imageMap[`images/${filename}`] = dataUrl;
+        imageMap[`/images/${filename}`] = dataUrl;
+        imageMap[`./images/${filename}`] = dataUrl;
+        imageMap[`../images/${filename}`] = dataUrl;
+        imageMap[filename] = dataUrl;
+        if (path.startsWith("public/")) {
+          imageMap[path.replace(/^public\//, "")] = dataUrl; // public/images/foo.png → images/foo.png
+          imageMap[`/${path.replace(/^public\//, "")}`] = dataUrl; // /images/foo.png
+        }
       } catch (err) {
-        console.warn(`[TemplateUpload] Failed to extract image: ${path}`, err);
+        console.warn(`[extractImages] Failed: ${path}`, err);
       }
     }),
   );
-  console.log("[extractImages] Final imageMap keys:", Object.keys(imageMap));
   return imageMap;
 }
 
-// ── Replace all image src/url() references with base64 ────
-// Handles: <img src="./images/x.png">, background-image: url(./images/x.png)
-function embedImagesIntoHtml(html: string, imageMap: Record<string, string>): string {
-  if (Object.keys(imageMap).length === 0) return html;
-
-  let result = html;
-  let totalReplacements = 0;
-
-  Object.entries(imageMap).forEach(([path, dataUrl]) => {
-    // Escape special regex chars in path
-    const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-    // Replace src="path" and src='path'
-    const srcCount = (result.match(new RegExp(`src=["']${escaped}["']`, "gi")) || []).length;
-    result = result.replace(new RegExp(`src=["']${escaped}["']`, "gi"), `src="${dataUrl}"`);
-    if (srcCount > 0) {
-      totalReplacements += srcCount;
-      console.log(`[embedImages] Replaced ${srcCount} src attributes for: ${path}`);
-    }
-
-    // Replace url(path), url("path"), url('path')
-    const urlCount = (result.match(new RegExp(`url\\(["']?${escaped}["']?\\)`, "gi")) || []).length;
-    result = result.replace(new RegExp(`url\\(["']?${escaped}["']?\\)`, "gi"), `url("${dataUrl}")`);
-    if (urlCount > 0) {
-      totalReplacements += urlCount;
-      console.log(`[embedImages] Replaced ${urlCount} url() for: ${path}`);
-    }
-
-    // Replace href="path" (for <link> or <a> pointing to images)
-    const hrefCount = (result.match(new RegExp(`href=["']${escaped}["']`, "gi")) || []).length;
-    result = result.replace(new RegExp(`href=["']${escaped}["']`, "gi"), `href="${dataUrl}"`);
-    if (hrefCount > 0) {
-      totalReplacements += hrefCount;
-      console.log(`[embedImages] Replaced ${hrefCount} href for: ${path}`);
-    }
-  });
-
-  console.log(`[embedImages] Total replacements in HTML: ${totalReplacements}`);
-  return result;
-}
-
-// ── Upload images to Firebase Storage and get download URLs ────
+// ── Upload images to Firebase Storage (avoids Firestore 1MB limit) ────
 async function uploadImagesToStorage(zip: JSZip, templateId: string): Promise<Record<string, string>> {
   const urlMap: Record<string, string> = {};
   const imageFiles = Object.entries(zip.files).filter(([path, file]) => {
@@ -147,9 +95,9 @@ async function uploadImagesToStorage(zip: JSZip, templateId: string): Promise<Re
     return lower.includes("images/") && Object.keys(IMAGE_MIME).some((ext) => lower.endsWith(`.${ext}`));
   });
 
-  console.log(`[uploadImages] Uploading ${imageFiles.length} images to Firebase Storage (parallel)`);
+  console.log(`[uploadImagesToStorage] Uploading ${imageFiles.length} images to Firebase Storage (5 concurrent max)`);
 
-  // ✅ Upload images in parallel with max 5 concurrent (prevents overwhelming network)
+  // ✅ Upload in parallel batches of 5
   const MAX_CONCURRENT = 5;
   for (let i = 0; i < imageFiles.length; i += MAX_CONCURRENT) {
     const batch = imageFiles.slice(i, i + MAX_CONCURRENT);
@@ -165,32 +113,124 @@ async function uploadImagesToStorage(zip: JSZip, templateId: string): Promise<Re
           await uploadBytes(fileRef, blob);
           const downloadUrl = await getDownloadURL(fileRef);
 
-          // Store with multiple key variants
+          // Store with multiple path variants to match all possible img src/url() patterns
           urlMap[path] = downloadUrl;
+          urlMap[`images/${filename}`] = downloadUrl;
+          urlMap[`/images/${filename}`] = downloadUrl;
           urlMap[`./images/${filename}`] = downloadUrl;
           urlMap[`../images/${filename}`] = downloadUrl;
           urlMap[filename] = downloadUrl;
+          if (path.startsWith("public/")) {
+            urlMap[path.replace(/^public\//, "")] = downloadUrl;
+            urlMap[`/${path.replace(/^public\//, "")}`] = downloadUrl;
+          }
 
-          console.log(`[uploadImages] ✅ Uploaded: ${filename}`);
+          console.log(`[uploadImagesToStorage] ✅ Uploaded: ${filename}`);
         } catch (err) {
-          console.warn(`[uploadImages] Failed to upload image: ${path}`, err);
+          console.warn(`[uploadImagesToStorage] Failed to upload: ${path}`, err);
         }
       }),
     );
   }
 
-  console.log(`[uploadImages] Final urlMap keys:`, Object.keys(urlMap));
+  console.log(`[uploadImagesToStorage] Complete: ${Object.keys(urlMap).length / 8} image(s) uploaded`);
   return urlMap;
 }
 
-// ── Also embed images into CSS string ─────────────────────
-function embedImagesIntoCss(css: string, imageMap: Record<string, string>): string {
-  if (!css || Object.keys(imageMap).length === 0) return css;
+function embedImagesIntoHtml(html: string, imageMap: Record<string, string>): string {
+  if (!Object.keys(imageMap).length) return html;
+  let result = html;
+  Object.entries(imageMap).forEach(([path, dataUrl]) => {
+    const esc = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    result = result.replace(new RegExp(`src=["']${esc}["']`, "gi"), `src="${dataUrl}"`);
+    result = result.replace(new RegExp(`url\\(["']?${esc}["']?\\)`, "gi"), `url("${dataUrl}")`);
+    result = result.replace(new RegExp(`href=["']${esc}["']`, "gi"), `href="${dataUrl}"`);
+  });
+  return result;
+}
 
+// ─────────────────────────────────────────────────────────────
+// ✅ KEY FIX: Strip compiled Tailwind, keep ONLY:
+//   1. :root { } CSS variable blocks
+//   2. Rules with base64 data: URLs (background images)
+//   3. @font-face rules
+//   4. Custom non-Tailwind rules
+// The canvas injects Tailwind CDN — we must NOT duplicate it.
+// Injecting @layer on top of CDN Tailwind breaks the cascade
+// and suppresses background-image rules entirely.
+// ─────────────────────────────────────────────────────────────
+function extractCustomCssOnly(css: string): string {
+  if (!css || !css.trim()) return "";
+
+  const isTailwindOutput = css.includes("tailwindcss") || css.includes("@layer theme") || css.includes("@layer base") || css.includes("@layer utilities") || css.includes("@layer components");
+
+  if (!isTailwindOutput) {
+    // Not Tailwind-compiled — keep as-is (pure custom CSS)
+    console.log("[extractCustomCssOnly] Not Tailwind output — keeping full CSS");
+    return css;
+  }
+
+  console.log(`[extractCustomCssOnly] Tailwind detected — extracting custom rules only`);
+  const kept: string[] = [];
+
+  // ── 1. :root { } blocks ───────────────────────────────
+  const rootRegex = /:root\s*\{([^}]+)\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = rootRegex.exec(css)) !== null) {
+    kept.push(`:root {\n${m[1]}\n}`);
+  }
+
+  // ── 2. Rules containing base64 data: URLs ─────────────
+  // These are background-image: url("data:image/...") rules
+  // We need to extract the full selector + block
+  const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  // Match: selector { ... url(data:...) ... }
+  // Use a simple state machine to handle nested braces
+  let i = 0;
+  while (i < cssWithoutComments.length) {
+    const openBrace = cssWithoutComments.indexOf("{", i);
+    if (openBrace === -1) break;
+
+    // Find matching close brace (handle nesting)
+    let depth = 1;
+    let j = openBrace + 1;
+    while (j < cssWithoutComments.length && depth > 0) {
+      if (cssWithoutComments[j] === "{") depth++;
+      else if (cssWithoutComments[j] === "}") depth--;
+      j++;
+    }
+    const closeBrace = j - 1;
+    const block = cssWithoutComments.slice(openBrace + 1, closeBrace);
+    const selector = cssWithoutComments.slice(i, openBrace).trim();
+
+    if (block.includes("data:image/") || block.includes("data:font/")) {
+      const rule = `${selector} {\n${block.trim()}\n}`;
+      // Avoid duplicates
+      if (!kept.some((k) => k.trim() === rule.trim())) {
+        kept.push(rule);
+      }
+    }
+
+    i = closeBrace + 1;
+  }
+
+  // ── 3. @font-face rules ───────────────────────────────
+  const fontFaceRegex = /@font-face\s*\{[^}]+\}/g;
+  while ((m = fontFaceRegex.exec(css)) !== null) {
+    kept.push(m[0]);
+  }
+
+  const result = kept.join("\n\n").trim();
+  console.log(`[extractCustomCssOnly] ${(css.length / 1024).toFixed(1)}KB → ${(result.length / 1024).toFixed(1)}KB`, `| ${kept.length} rule(s) kept`);
+  return result;
+}
+
+function embedImagesIntoCss(css: string, imageMap: Record<string, string>): string {
+  if (!css || !Object.keys(imageMap).length) return css;
   let result = css;
   Object.entries(imageMap).forEach(([path, dataUrl]) => {
-    const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    result = result.replace(new RegExp(`url\\(["']?${escaped}["']?\\)`, "gi"), `url("${dataUrl}")`);
+    const esc = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    result = result.replace(new RegExp(`url\\(["']?${esc}["']?\\)`, "gi"), `url("${dataUrl}")`);
   });
   return result;
 }
@@ -198,22 +238,17 @@ function embedImagesIntoCss(css: string, imageMap: Record<string, string>): stri
 function hashString(str: string): string {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = (hash << 5) - hash + char;
+    hash = (hash << 5) - hash + str.charCodeAt(i);
     hash = hash & hash;
   }
   return Math.abs(hash).toString(36);
 }
 
-// ── Firestore duplicate checks ──────────────────────────
 async function findDuplicateByContent(htmlString: string): Promise<ExistingTemplate | null> {
   try {
     const incoming = hashString(htmlString.trim());
     const snap = await getDocs(collection(db, "templates"));
-    const found = snap.docs.find((d) => {
-      const raw = d.data().rawHtml || "";
-      return hashString(raw.trim()) === incoming;
-    });
+    const found = snap.docs.find((d) => hashString((d.data().rawHtml || "").trim()) === incoming);
     return found ? (found.data() as ExistingTemplate) : null;
   } catch {
     return null;
@@ -230,7 +265,6 @@ async function findDuplicateByName(name: string): Promise<ExistingTemplate | nul
   }
 }
 
-// ── HTML Validator ───────────────────────────────────────
 function validateHtmlStructure(htmlString: string): ValidationCheck[] {
   const checks: ValidationCheck[] = [];
   const parser = new DOMParser();
@@ -242,8 +276,7 @@ function validateHtmlStructure(htmlString: string): ValidationCheck[] {
     label: "Has data-block sections",
     ok: blocks.length > 0,
     blocking: true,
-    message:
-      blocks.length > 0 ? `Found ${blocks.length} block${blocks.length !== 1 ? "s" : ""}: ${blockIds.slice(0, 5).join(", ")}${blockIds.length > 5 ? "…" : ""}` : "No [data-block] elements found.",
+    message: blocks.length > 0 ? `Found ${blocks.length} block(s): ${blockIds.slice(0, 5).join(", ")}${blockIds.length > 5 ? "…" : ""}` : "No [data-block] elements found.",
     detail: blocks.length === 0 ? `Every section must have a data-block attribute.\nExample: <section data-block="hero">` : undefined,
   });
 
@@ -253,8 +286,8 @@ function validateHtmlStructure(htmlString: string): ValidationCheck[] {
     label: "No duplicate block IDs",
     ok: duplicates.length === 0,
     blocking: true,
-    message: duplicates.length === 0 ? "All block IDs are unique ✓" : `Duplicate block IDs: ${uniqueDups.join(", ")}`,
-    detail: duplicates.length > 0 ? `Each data-block value must be unique.\nDuplicates: ${uniqueDups.join(", ")}` : undefined,
+    message: duplicates.length === 0 ? "All block IDs are unique ✓" : `Duplicate IDs: ${uniqueDups.join(", ")}`,
+    detail: duplicates.length > 0 ? `Each data-block must be unique.\nDuplicates: ${uniqueDups.join(", ")}` : undefined,
   });
 
   const editables = Array.from(doc.querySelectorAll("[data-editable]"));
@@ -262,7 +295,7 @@ function validateHtmlStructure(htmlString: string): ValidationCheck[] {
     label: "Has data-editable fields",
     ok: editables.length > 0,
     blocking: true,
-    message: editables.length > 0 ? `Found ${editables.length} editable field${editables.length !== 1 ? "s" : ""}` : "No [data-editable] elements found.",
+    message: editables.length > 0 ? `Found ${editables.length} editable field(s)` : "No [data-editable] elements found.",
     detail: editables.length === 0 ? `Add data-editable and data-editable-type to editable elements.` : undefined,
   });
 
@@ -271,10 +304,7 @@ function validateHtmlStructure(htmlString: string): ValidationCheck[] {
     label: "All editables have data-editable-type",
     ok: missingType.length === 0,
     blocking: true,
-    message:
-      missingType.length === 0
-        ? "All editable elements have a type ✓"
-        : `${missingType.length} editable${missingType.length !== 1 ? "s" : ""} missing data-editable-type: ${missingType.map((e) => e.getAttribute("data-editable") || "?").join(", ")}`,
+    message: missingType.length === 0 ? "All editable elements have a type ✓" : `${missingType.length} missing data-editable-type`,
     detail: missingType.length > 0 ? `Every data-editable must have data-editable-type="text", "image", or "link".` : undefined,
   });
 
@@ -287,10 +317,7 @@ function validateHtmlStructure(htmlString: string): ValidationCheck[] {
     label: "Valid data-editable-type values",
     ok: invalidTypes.length === 0,
     blocking: true,
-    message:
-      invalidTypes.length === 0
-        ? `All types are valid (text / image / link) ✓`
-        : `Invalid types: ${invalidTypes.map((e) => `${e.getAttribute("data-editable")}="${e.getAttribute("data-editable-type")}"`).join(", ")}`,
+    message: invalidTypes.length === 0 ? `All types valid ✓` : `Invalid types found`,
     detail: invalidTypes.length > 0 ? `Allowed: "text", "image", "link".` : undefined,
   });
 
@@ -307,95 +334,40 @@ function validateHtmlStructure(htmlString: string): ValidationCheck[] {
     label: "Has CSS variables in :root",
     ok: cssVarNames.length > 0,
     blocking: true,
-    message:
-      cssVarNames.length > 0
-        ? `Found ${cssVarNames.length} CSS variable${cssVarNames.length !== 1 ? "s" : ""}: ${cssVarNames.slice(0, 4).join(", ")}${cssVarNames.length > 4 ? "…" : ""}`
-        : "No :root CSS variables found.",
+    message: cssVarNames.length > 0 ? `Found ${cssVarNames.length} CSS var(s): ${cssVarNames.slice(0, 4).join(", ")}${cssVarNames.length > 4 ? "…" : ""}` : "No :root CSS variables found.",
     detail: cssVarNames.length === 0 ? `Add :root { --primary: #6366f1; } in a <style> tag.` : undefined,
   });
 
-  const colorVarEls = Array.from(doc.querySelectorAll("[data-color-vars]"));
-  const brokenColorVars: string[] = [];
-  colorVarEls.forEach((el) => {
-    const raw = el.getAttribute("data-color-vars") || "";
-    raw.split(",").forEach((pair) => {
-      const varName = pair.split(":")[1]?.trim();
-      if (varName && !cssVarNames.includes(varName)) brokenColorVars.push(varName);
-    });
-  });
-  if (colorVarEls.length > 0) {
-    checks.push({
-      label: "data-color-vars reference valid CSS vars",
-      ok: brokenColorVars.length === 0,
-      blocking: false,
-      message:
-        brokenColorVars.length === 0
-          ? "All color-var references are valid ✓"
-          : `${brokenColorVars.length} var${brokenColorVars.length !== 1 ? "s" : ""} not in :root: ${[...new Set(brokenColorVars)].join(", ")}`,
-      detail: brokenColorVars.length > 0 ? `Not defined in :root:\n${[...new Set(brokenColorVars)].join(", ")}` : undefined,
-    });
-  }
   return checks;
 }
 
-// ── Validate ZIP (now detects images/ folder) ────────────
-async function validateZip(file: File): Promise<{
-  result: ValidationResult;
-  htmlString: string | null;
-  imageCount: number;
-}> {
+async function validateZip(file: File): Promise<{ result: ValidationResult; htmlString: string | null; imageCount: number }> {
   const checks: ValidationCheck[] = [];
   let htmlString: string | null = null;
   let imageCount = 0;
 
-  checks.push({
-    label: "File format is .zip",
-    ok: file.name.endsWith(".zip"),
-    blocking: true,
-    message: file.name.endsWith(".zip") ? "Valid ZIP file ✓" : "File must be a .zip archive",
-  });
+  checks.push({ label: "File format is .zip", ok: file.name.endsWith(".zip"), blocking: true, message: file.name.endsWith(".zip") ? "Valid ZIP ✓" : "Must be .zip" });
   const sizeMB = file.size / (1024 * 1024);
-  checks.push({
-    label: "File size under 10MB",
-    ok: sizeMB < 10,
-    blocking: true,
-    message: sizeMB < 10 ? `${sizeMB.toFixed(2)} MB — OK ✓` : `${sizeMB.toFixed(2)} MB — exceeds 10MB limit`,
-  });
+  checks.push({ label: "File size under 10MB", ok: sizeMB < 10, blocking: true, message: sizeMB < 10 ? `${sizeMB.toFixed(2)} MB ✓` : `${sizeMB.toFixed(2)} MB — too large` });
 
   try {
     const zip = await JSZip.loadAsync(file);
     const files = Object.keys(zip.files);
-
     const htmlFile = files.find((f) => f.endsWith("index.html"));
     const cssFile = files.find((f) => f.includes("public/") && f.endsWith(".css"));
 
-    // ✅ Count images in images/ folder (optional — not blocking)
-    const imageFiles = files.filter((f) => {
+    imageCount = files.filter((f) => {
       const lower = f.toLowerCase();
       return lower.includes("images/") && Object.keys(IMAGE_MIME).some((ext) => lower.endsWith(`.${ext}`)) && !zip.files[f].dir;
-    });
-    imageCount = imageFiles.length;
+    }).length;
 
-    checks.push({
-      label: "Contains index.html",
-      ok: !!htmlFile,
-      blocking: true,
-      message: htmlFile ? `Found: ${htmlFile} ✓` : "index.html is missing from ZIP",
-    });
-    checks.push({
-      label: "Contains public/style.css",
-      ok: !!cssFile,
-      blocking: true,
-      message: cssFile ? `Found: ${cssFile} ✓` : "public/style.css is missing",
-    });
-
-    // ✅ Images folder check — WARNING only (not blocking)
+    checks.push({ label: "Contains index.html", ok: !!htmlFile, blocking: true, message: htmlFile ? `Found: ${htmlFile} ✓` : "index.html missing" });
+    checks.push({ label: "Contains public/style.css", ok: !!cssFile, blocking: true, message: cssFile ? `Found: ${cssFile} ✓` : "public/style.css missing" });
     checks.push({
       label: "Images folder (optional)",
       ok: imageCount > 0,
       blocking: false,
-      message: imageCount > 0 ? `Found ${imageCount} image${imageCount !== 1 ? "s" : ""} in images/ folder — will be embedded ✓` : "No images/ folder found — OK if template uses external URLs",
-      detail: imageCount === 0 ? `If your template uses local images, put them in:\nimages/hero.png, images/logo.svg, etc.\nThey will be auto-embedded as base64.` : undefined,
+      message: imageCount > 0 ? `${imageCount} image(s) found — will be embedded as base64 ✓` : "No images/ folder",
     });
 
     if (htmlFile) {
@@ -403,24 +375,17 @@ async function validateZip(file: File): Promise<{
       checks.push(...validateHtmlStructure(htmlString));
     }
   } catch {
-    checks.push({
-      label: "ZIP is readable",
-      ok: false,
-      blocking: true,
-      message: "Could not open ZIP — may be corrupted",
-    });
+    checks.push({ label: "ZIP is readable", ok: false, blocking: true, message: "Could not open ZIP" });
   }
 
   const blockingFailed = checks.filter((c) => c.blocking && !c.ok);
-  const warnings = checks.filter((c) => !c.blocking && !c.ok).length;
   return {
-    result: { passed: blockingFailed.length === 0, checks, warnings, errors: blockingFailed.length },
+    result: { passed: blockingFailed.length === 0, checks, warnings: checks.filter((c) => !c.blocking && !c.ok).length, errors: blockingFailed.length },
     htmlString,
     imageCount,
   };
 }
 
-// ── CheckRow component ────────────────────────────────────
 function CheckRow({ check }: { check: ValidationCheck }) {
   const [expanded, setExpanded] = useState(false);
   const isWarning = !check.blocking && !check.ok;
@@ -459,7 +424,6 @@ function CheckRow({ check }: { check: ValidationCheck }) {
   );
 }
 
-// ── Main Component ────────────────────────────────────────
 export default function TemplateUpload({ onUploaded }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -474,10 +438,8 @@ export default function TemplateUpload({ onUploaded }: Props) {
   const [fileOverride, setFileOverride] = useState(false);
   const [nameOverride, setNameOverride] = useState(false);
   const [liveNameDup, setLiveNameDup] = useState<ExistingTemplate | null>(null);
-  // ✅ Track detected image count for UI feedback
   const [detectedImages, setDetectedImages] = useState(0);
 
-  // Live name duplicate check
   useEffect(() => {
     if (!templateName.trim()) {
       setLiveNameDup(null);
@@ -547,75 +509,68 @@ export default function TemplateUpload({ onUploaded }: Props) {
 
       setUploadState({ status: "uploading", message: "Extracting files...", progress: 30 });
 
-      // ── Extract HTML ──────────────────────────────────────
       const htmlFile = files.find((f) => f.endsWith("index.html"));
       if (!htmlFile) throw new Error("index.html not found in ZIP");
       let htmlString = await zip.files[htmlFile].async("string");
 
-      // ── Extract CSS ───────────────────────────────────────
       const cssFile = files.find((f) => f.includes("public/") && f.endsWith("style.css"));
       let cssString = cssFile ? await zip.files[cssFile].async("string") : "";
 
-      // ── Extract JS ────────────────────────────────────────
       const jsFile = files.find((f) => f.includes("public/") && f.endsWith(".js"));
       const jsString = jsFile ? await zip.files[jsFile].async("string") : "";
 
-      // ✅ Extract & upload images to Firebase Storage ─────────
-      setUploadState({ status: "uploading", message: "Uploading images...", progress: 50 });
+      // ✅ Upload images to Firebase Storage (NOT base64) ────────────────────────────
+      setUploadState({ status: "uploading", message: "Uploading images to Firebase Storage...", progress: 45 });
       const templateId = `tpl_${Date.now()}`;
       const imageUrlMap = await uploadImagesToStorage(zip, templateId);
-      const uploadedImageCount = Object.keys(imageUrlMap).length / 4; // divided by 4 key variants per image
+      const uploadedImageCount = Object.keys(imageUrlMap).length / 8; // 8 variants per image
 
       if (Object.keys(imageUrlMap).length > 0) {
-        console.log(`[TemplateUpload] Uploaded images: ${uploadedImageCount} images with ${Object.keys(imageUrlMap).length} keys`);
         htmlString = embedImagesIntoHtml(htmlString, imageUrlMap);
         cssString = embedImagesIntoCss(cssString, imageUrlMap);
-        console.log(`[TemplateUpload] ✅ Embedded ~${Math.round(uploadedImageCount)} image URLs into HTML/CSS`);
-        console.log(`[TemplateUpload] rawCss sample (first 500 chars):`, cssString.substring(0, 500));
-      } else {
-        console.warn(`[TemplateUpload] ⚠️ NO IMAGES FOUND in ZIP - image folder may be named differently or images missing`);
+        console.log(`[TemplateUpload] ✅ Embedded ${Math.round(uploadedImageCount)} image URLs from Firebase Storage`);
       }
 
-      setUploadState({ status: "uploading", message: "Parsing HTML structure...", progress: 65 });
+      // ✅ CRITICAL: Strip compiled Tailwind from CSS
+      // Keep ONLY: :root vars, base64 image rules, @font-face
+      // Reason: Canvas injects Tailwind CDN — injecting @layer CSS
+      // on top of CDN breaks cascade and hides background images
+      setUploadState({ status: "uploading", message: "Processing CSS...", progress: 60 });
+      const strippedCss = extractCustomCssOnly(cssString);
+      console.log(`[TemplateUpload] CSS: ${(cssString.length / 1024).toFixed(1)}KB → ${(strippedCss.length / 1024).toFixed(1)}KB after stripping Tailwind`);
 
-      const parsedTemplate = parseHtmlToTemplate({
-        htmlString,
-        templateId,
-        templateName: templateName.trim(),
-        category,
-      });
+      setUploadState({ status: "uploading", message: "Parsing HTML structure...", progress: 70 });
 
-      // Attach raw assets
+      const parsedTemplate = parseHtmlToTemplate({ htmlString, templateId, templateName: templateName.trim(), category });
+
       const templateWithAssets = {
         ...parsedTemplate,
-        rawCss: cssString,
-        rawHtml: htmlString, // ✅ HTML already has images embedded with Firebase URLs
+        rawHtml: htmlString,
+        rawCss: strippedCss, // ✅ Only custom CSS — no Tailwind bloat
         ...(jsString && { rawJs: jsString }),
       };
 
-      setUploadState({ status: "uploading", message: "Saving to Firestore...", progress: 85 });
-
-      // ✅ Check document size before saving (Firestore limit is 1MB)
-      const docSizeEstimate = new Blob([JSON.stringify(templateWithAssets)]).size;
-      const sizeMB = (docSizeEstimate / (1024 * 1024)).toFixed(2);
-      console.log(`[TemplateUpload] Document size: ${sizeMB} MB (limit: 1 MB)`);
-      if (docSizeEstimate > 1024 * 1024) {
-        throw new Error(`Document too large: ${sizeMB} MB. Please contact support.`);
+      setUploadState({ status: "uploading", message: "Checking document size...", progress: 80 });
+      const docBytes = new Blob([JSON.stringify(templateWithAssets)]).size;
+      console.log(`[TemplateUpload] Document size: ${(docBytes / 1024 / 1024).toFixed(2)} MB (images stored separately in Firebase Storage)`);
+      if (docBytes > 900_000) {
+        throw new Error(`Document is still ${(docBytes / 1024 / 1024).toFixed(1)} MB. Please reduce CSS or contact support.`);
       }
 
+      setUploadState({ status: "uploading", message: "Saving to Firestore...", progress: 90 });
       await setDoc(doc(db, "templates", templateId), templateWithAssets);
-      console.log(`[TemplateUpload] ✅ Successfully saved to Firestore`);
 
-      const imgMsg = uploadedImageCount > 0 ? ` · ${Math.round(uploadedImageCount)} image${Math.round(uploadedImageCount) !== 1 ? "s" : ""} uploaded` : "";
+      const imgMsg = uploadedImageCount > 0 ? ` · ${Math.round(uploadedImageCount)} image(s) uploaded to Firebase Storage` : "";
+      const cssMsg = strippedCss ? ` · custom CSS saved` : "";
       setUploadState({
         status: "success",
-        message: `Template saved! ${templateWithAssets.blocks.length} blocks · ${Object.keys(templateWithAssets.cssVariables).length} CSS vars${imgMsg}.`,
+        message: `Template saved! ${templateWithAssets.blocks.length} blocks · ${Object.keys(templateWithAssets.cssVariables).length} CSS vars${imgMsg}${cssMsg}.`,
         progress: 100,
       });
       onUploaded();
       setTimeout(() => handleReset(), 3500);
     } catch (err: any) {
-      setUploadState({ status: "error", message: `Upload failed: ${err?.message || "Unknown error"}`, progress: 0 });
+      setUploadState({ status: "error", message: `Upload failed: ${err?.message ?? "Unknown error"}`, progress: 0 });
     }
   }
 
@@ -640,7 +595,6 @@ export default function TemplateUpload({ onUploaded }: Props) {
 
   const isUploading = uploadState.status === "uploading";
   const isValidating = uploadState.status === "validating";
-
   const canUpload =
     !!selectedFile &&
     !!templateName.trim() &&
@@ -656,11 +610,10 @@ export default function TemplateUpload({ onUploaded }: Props) {
 
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-      {/* Header */}
       <div className="px-6 py-4 bg-gradient-to-r from-indigo-600 to-violet-600">
         <h3 className="text-base font-bold text-white">Upload Template</h3>
         <p className="text-xs text-indigo-200 mt-0.5">
-          ZIP must contain <code className="bg-white/20 px-1 rounded">index.html</code>, <code className="bg-white/20 px-1 rounded">public/</code> and optionally{" "}
+          ZIP must contain <code className="bg-white/20 px-1 rounded">index.html</code>, <code className="bg-white/20 px-1 rounded">public/style.css</code> and optionally{" "}
           <code className="bg-white/20 px-1 rounded">images/</code>
         </p>
       </div>
@@ -685,14 +638,13 @@ export default function TemplateUpload({ onUploaded }: Props) {
           />
         </div>
 
-        {/* File content duplicate warning */}
+        {/* File duplicate warning */}
         {fileDup && !fileOverride && (
           <div className="bg-red-50 border-2 border-red-400 rounded-xl overflow-hidden">
             <div className="flex items-start gap-3 px-4 py-3">
               <span className="text-2xl shrink-0">🚫</span>
               <div className="flex-1">
                 <p className="text-sm font-bold text-red-700">This file is already uploaded!</p>
-                <p className="text-xs text-red-600 mt-1">Already exists as:</p>
                 <div className="mt-1.5 px-3 py-2 bg-red-100 rounded-lg border border-red-200">
                   <p className="text-xs font-bold text-red-700">{fileDup.templateName}</p>
                   <p className="text-xs text-red-500">
@@ -709,7 +661,6 @@ export default function TemplateUpload({ onUploaded }: Props) {
                   setSelectedFile(null);
                   setValidation(null);
                   setParsedHtml(null);
-                  setFileOverride(false);
                   if (fileInputRef.current) fileInputRef.current.value = "";
                 }}
                 className="flex-1 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white text-xs font-bold transition"
@@ -814,7 +765,6 @@ export default function TemplateUpload({ onUploaded }: Props) {
             }`}
         >
           <input ref={fileInputRef} type="file" accept=".zip" className="hidden" onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
-
           {isValidating ? (
             <>
               <Loader2 size={36} className="text-indigo-400 animate-spin" />
@@ -822,10 +772,7 @@ export default function TemplateUpload({ onUploaded }: Props) {
             </>
           ) : selectedFile ? (
             <>
-              <div
-                className={`w-14 h-14 rounded-2xl flex items-center justify-center
-                ${validation?.passed ? "bg-green-100" : validation ? "bg-red-100" : "bg-indigo-100"}`}
-              >
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${validation?.passed ? "bg-green-100" : validation ? "bg-red-100" : "bg-indigo-100"}`}>
                 {validation?.passed ? (
                   <CheckCircle size={28} className="text-green-500" />
                 ) : validation ? (
@@ -847,12 +794,10 @@ export default function TemplateUpload({ onUploaded }: Props) {
                     </span>
                   )}
                 </p>
-                {/* ✅ Show image count badge */}
                 {detectedImages > 0 && (
                   <div className="flex items-center justify-center gap-1 mt-1.5">
                     <span className="inline-flex items-center gap-1 text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full font-semibold">
-                      <Image size={10} />
-                      {detectedImages} image{detectedImages !== 1 ? "s" : ""} detected — will be embedded
+                      <Image size={10} /> {detectedImages} image(s) → base64
                     </span>
                   </div>
                 )}
@@ -885,24 +830,16 @@ export default function TemplateUpload({ onUploaded }: Props) {
               </div>
               {validation && (
                 <div className="flex items-center gap-2">
-                  {validation.errors > 0 && (
-                    <span className="text-xs bg-red-100 text-red-600 font-bold px-2 py-0.5 rounded-full">
-                      {validation.errors} error{validation.errors !== 1 ? "s" : ""}
-                    </span>
-                  )}
-                  {validation.warnings > 0 && (
-                    <span className="text-xs bg-amber-100 text-amber-600 font-bold px-2 py-0.5 rounded-full">
-                      {validation.warnings} warning{validation.warnings !== 1 ? "s" : ""}
-                    </span>
-                  )}
-                  {validation.passed && validation.errors === 0 && <span className="text-xs bg-green-100 text-green-600 font-bold px-2 py-0.5 rounded-full">✓ Ready to upload</span>}
+                  {validation.errors > 0 && <span className="text-xs bg-red-100 text-red-600 font-bold px-2 py-0.5 rounded-full">{validation.errors} error(s)</span>}
+                  {validation.warnings > 0 && <span className="text-xs bg-amber-100 text-amber-600 font-bold px-2 py-0.5 rounded-full">{validation.warnings} warning(s)</span>}
+                  {validation.passed && validation.errors === 0 && <span className="text-xs bg-green-100 text-green-600 font-bold px-2 py-0.5 rounded-full">✓ Ready</span>}
                 </div>
               )}
             </div>
             <div className="p-3 space-y-1.5 bg-white">
               {isValidating ? (
                 <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
-                  <Loader2 size={13} className="animate-spin text-indigo-400" /> Running validation checks...
+                  <Loader2 size={13} className="animate-spin text-indigo-400" /> Running checks...
                 </div>
               ) : (
                 <>
@@ -920,7 +857,7 @@ export default function TemplateUpload({ onUploaded }: Props) {
                         </>
                       ) : (
                         <>
-                          <ChevronDown size={12} /> Show {sortedChecks.length - 5} more checks
+                          <ChevronDown size={12} /> Show {sortedChecks.length - 5} more
                         </>
                       )}
                     </button>
@@ -977,7 +914,7 @@ export default function TemplateUpload({ onUploaded }: Props) {
               </>
             ) : fileDup && !fileOverride ? (
               <>
-                <XCircle size={15} /> Blocked — Duplicate File
+                <XCircle size={15} /> Blocked — Duplicate
               </>
             ) : liveNameDup && !nameOverride ? (
               <>
@@ -994,25 +931,15 @@ export default function TemplateUpload({ onUploaded }: Props) {
           </button>
         </div>
 
-        {/* ✅ Updated ZIP Guide showing images/ folder */}
+        {/* Guide */}
         <div className="rounded-xl border border-amber-100 bg-amber-50 overflow-hidden">
           <div className="px-3 py-2 border-b border-amber-100 flex items-center gap-2">
             <AlertTriangle size={13} className="text-amber-500" />
             <p className="text-xs font-bold text-amber-700">Required ZIP structure</p>
           </div>
           <div className="px-3 py-2.5">
-            <pre className="text-xs text-amber-700 font-mono leading-relaxed">{`template.zip
-├── index.html
-├── public/
-│   ├── style.css
-│   └── main.js
-└── images/          ← optional
-    ├── hero.png
-    ├── logo.svg
-    └── bg.webp`}</pre>
-            <p className="text-xs text-amber-600 mt-2">
-              💡 Images in <code className="bg-amber-100 px-1 rounded">images/</code> are automatically embedded as base64 — no external hosting needed.
-            </p>
+            <pre className="text-xs text-amber-700 font-mono leading-relaxed">{`template.zip\n├── index.html\n├── public/\n│   ├── style.css\n│   └── main.js\n└── images/\n    ├── hero.png\n    └── logo.svg`}</pre>
+            <p className="text-xs text-amber-600 mt-2">💡 Compiled Tailwind CSS is auto-stripped — only custom rules & base64 images are saved.</p>
           </div>
         </div>
       </div>

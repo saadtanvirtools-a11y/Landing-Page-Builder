@@ -364,6 +364,9 @@ export default function Canvas({ draggingOption, activeDropZone }: { draggingOpt
     iframeReady.current = false;
     sentToIframe.current = {};
     lastBlockStyles.current = {};
+      // ✅ ADD THIS DEBUG LINE
+  console.log('[Canvas] rawCss length:', currentTemplate.rawCss?.length ?? 'MISSING/UNDEFINED');
+  console.log('[Canvas] rawCss sample:', currentTemplate.rawCss?.substring(0, 100) ?? 'NONE');
 
     // ✅ Pull rawCss from template (set by TemplateUpload as parsedTemplate.rawCss)
     const rawCss = currentTemplate.rawCss ?? "";
