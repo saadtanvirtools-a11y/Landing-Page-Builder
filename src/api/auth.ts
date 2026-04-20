@@ -3,7 +3,7 @@ import {
   setDoc, query, where, updateDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
-import type { ApiResponse, AuthResponse, LoginPayload, SignupPayload } from "../types";
+import type {AuthResponse, LoginPayload, SignupPayload } from "../types";
 
 // ─────────────────────────────────────────────────────────
 // COLLECTION NAMES
