@@ -86,6 +86,11 @@ function prettifyLabel(id: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function isValidSvgMarkup(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.startsWith("<svg") && trimmed.includes("</svg>");
+}
+
 // ─────────────────────────────────────────────────────────────
 // PROPS
 // ─────────────────────────────────────────────────────────────
@@ -302,6 +307,47 @@ function ImageField({
         className="hidden"
         onChange={handleFile}
       />
+    </div>
+  );
+}
+
+function SvgField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const isValid = isValidSvgMarkup(value);
+
+  return (
+    <div className="space-y-2.5">
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 min-h-[120px] p-4 flex items-center justify-center overflow-hidden">
+        {isValid ? (
+          <div
+            className="max-w-full max-h-[160px] [&>svg]:max-w-full [&>svg]:max-h-[140px] [&>svg]:w-auto [&>svg]:h-auto"
+            dangerouslySetInnerHTML={{ __html: value }}
+          />
+        ) : (
+          <p className="text-xs text-slate-400 text-center">
+            Paste valid SVG code to preview here
+          </p>
+        )}
+      </div>
+
+      <TextArea value={value} onChange={onChange} rows={10} />
+
+      <div className="rounded-xl bg-indigo-50 border border-indigo-100 px-3 py-2">
+        <p className="text-[11px] text-indigo-700 leading-relaxed">
+          Paste full SVG code. Best result comes when SVG uses <span className="font-semibold">fill="currentColor"</span> or <span className="font-semibold">stroke="currentColor"</span>.
+        </p>
+      </div>
+
+      {!isValid && value.trim() && (
+        <p className="text-xs text-amber-600">
+          This does not look like valid SVG markup yet.
+        </p>
+      )}
     </div>
   );
 }
@@ -615,8 +661,10 @@ function EditableCard({
   const currentFontSize = getCurrentClass(item.tailwindClass, FONT_SIZE_OPTIONS);
   const currentFontWeight = getCurrentClass(item.tailwindClass, FONT_WEIGHT_OPTIONS);
 
+  const contentIsSvg = isValidSvgMarkup(item.content);
   const isImage = item.type === "image";
   const isLink = item.type === "link";
+  const isSvg = item.type === "svg" || contentIsSvg;
   const isTextLike = item.type === "text" || item.type === "link";
 
   return (
@@ -628,11 +676,23 @@ function EditableCard({
         <span
           className="shrink-0 w-7 h-7 rounded-xl flex items-center justify-center text-xs shadow-sm"
           style={{
-            background: isImage ? "#fef3c7" : isLink ? "#dbeafe" : "#ede9fe",
-            color: isImage ? "#92400e" : isLink ? "#1d4ed8" : "#5b21b6",
+            background: isImage
+              ? "#fef3c7"
+              : isLink
+                ? "#dbeafe"
+                : isSvg
+                  ? "#dcfce7"
+                  : "#ede9fe",
+            color: isImage
+              ? "#92400e"
+              : isLink
+                ? "#1d4ed8"
+                : isSvg
+                  ? "#166534"
+                  : "#5b21b6",
           }}
         >
-          {isImage ? "🖼" : isLink ? "🔗" : "T"}
+          {isImage ? "🖼" : isLink ? "🔗" : isSvg ? "⬡" : "T"}
         </span>
 
         <span className="flex-1 text-xs font-semibold text-slate-700 truncate">{label}</span>
@@ -657,6 +717,8 @@ function EditableCard({
               <ImageField value={item.content} onChange={(v) => onEditableChange(item.id, v)} />
             ) : isLink ? (
               <LinkField value={item.content} onChange={(v) => onEditableChange(item.id, v)} />
+            ) : isSvg ? (
+              <SvgField value={item.content} onChange={(v) => onEditableChange(item.id, v)} />
             ) : item.content.length > 80 ? (
               <TextArea value={item.content} onChange={(v) => onEditableChange(item.id, v)} />
             ) : (
@@ -664,7 +726,7 @@ function EditableCard({
             )}
           </div>
 
-          {isTextLike && (
+          {isTextLike && !isSvg && (
             <div className="space-y-2.5">
               <p className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.14em]">Typography</p>
 
@@ -705,7 +767,9 @@ function EditableCard({
 
           {Object.keys(item.colorVars).length > 0 && (
             <div className="space-y-2.5">
-              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.14em]">Colors</p>
+              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.14em]">
+                {isSvg ? "SVG Colors" : "Colors"}
+              </p>
               {Object.entries(item.colorVars)
                 .filter(([prop]) => prop !== "bg")
                 .map(([prop, varName]) => (
@@ -720,7 +784,7 @@ function EditableCard({
             </div>
           )}
 
-          {extraProps.length > 0 && (
+          {extraProps.length > 0 && !isSvg && (
             <div className="space-y-2.5">
               <p className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.14em]">Layout</p>
 
@@ -880,9 +944,18 @@ export default function PropertiesPanel({
 
   const { blockId, blockName, editables, colorVars, styles } = selectedBlock;
 
-  const textEditables = editables.filter((e) => e.type === "text");
+  // ✅ text items that are NOT svg markup
+  const textEditables = editables.filter(
+    (e) => e.type === "text" && !isValidSvgMarkup(e.content)
+  );
+
   const imageEditables = editables.filter((e) => e.type === "image");
   const linkEditables = editables.filter((e) => e.type === "link");
+
+  // ✅ real svg type OR text containing svg markup
+  const svgEditables = editables.filter(
+    (e) => e.type === "svg" || (e.type === "text" && isValidSvgMarkup(e.content))
+  );
 
   return (
     <div className="w-80 bg-gradient-to-b from-white to-slate-50 border-l border-indigo-100 flex flex-col h-full overflow-hidden">
@@ -933,6 +1006,12 @@ export default function PropertiesPanel({
           {linkEditables.length > 0 && (
             <span className="flex items-center gap-1 text-[11px] bg-white/15 text-white px-2 py-1 rounded-lg border border-white/20">
               🔗 {linkEditables.length} link
+            </span>
+          )}
+
+          {svgEditables.length > 0 && (
+            <span className="flex items-center gap-1 text-[11px] bg-white/15 text-white px-2 py-1 rounded-lg border border-white/20">
+              ⬡ {svgEditables.length} svg
             </span>
           )}
         </div>
@@ -995,6 +1074,23 @@ export default function PropertiesPanel({
           <AccordionSection icon="🖼️" title="Images" badge={imageEditables.length}>
             <div className="space-y-2.5">
               {imageEditables.map((item) => (
+                <EditableCard
+                  key={item.id}
+                  item={item}
+                  onEditableChange={onEditableChange}
+                  onCssVarChange={onCssVarChange}
+                  onClassSwap={onClassSwap}
+                  resolveLiveColor={resolveLiveColor}
+                />
+              ))}
+            </div>
+          </AccordionSection>
+        )}
+
+        {svgEditables.length > 0 && (
+          <AccordionSection icon="⬡" title="SVG Content" badge={svgEditables.length}>
+            <div className="space-y-2.5">
+              {svgEditables.map((item) => (
                 <EditableCard
                   key={item.id}
                   item={item}

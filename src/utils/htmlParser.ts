@@ -67,6 +67,27 @@ function readTailwindClass(el: Element): { tailwindClass: string; styleChildSele
 }
 
 // ─────────────────────────────────────────────────────────
+// helper — sanitize SVG so editor stores only real markup
+// ─────────────────────────────────────────────────────────
+function extractSvgMarkup(el: Element): string {
+  if (el.tagName.toLowerCase() === "svg") {
+    return el.outerHTML.trim();
+  }
+
+  const directSvg = Array.from(el.children).find((child) => child.tagName.toLowerCase() === "svg");
+  if (directSvg) {
+    return directSvg.outerHTML.trim();
+  }
+
+  const nestedSvg = el.querySelector("svg");
+  if (nestedSvg) {
+    return nestedSvg.outerHTML.trim();
+  }
+
+  return (el.innerHTML || "").trim();
+}
+
+// ─────────────────────────────────────────────────────────
 // STEP 3 — Extract all [data-editable] elements inside a block
 // ─────────────────────────────────────────────────────────
 function extractEditables(blockEl: Element): EditableItem[] {
@@ -75,7 +96,8 @@ function extractEditables(blockEl: Element): EditableItem[] {
 
   for (const el of elements) {
     const id = el.getAttribute("data-editable") || "";
-    const type = (el.getAttribute("data-editable-type") || "text") as EditableItem["type"];
+    const rawType = (el.getAttribute("data-editable-type") || "text").trim().toLowerCase();
+    let type = rawType as "text" | "image" | "link" | "svg";
 
     let content = "";
 
@@ -83,15 +105,23 @@ function extractEditables(blockEl: Element): EditableItem[] {
       content = el.getAttribute("src") || (el as HTMLImageElement).src || "";
     } else if (type === "link") {
       content = el.getAttribute("href") || "";
+    } else if (type === "svg") {
+      content = extractSvgMarkup(el);
     } else {
       content = (el.textContent || "").trim();
+    }
+
+    // ✅ Auto-detect SVG: if type is "text" but element contains SVG, treat as SVG
+    if (type === "text" && (content === "" || content.trim() === "") && el.querySelector("svg")) {
+      type = "svg";
+      content = extractSvgMarkup(el);
     }
 
     const { tailwindClass, styleChildSelector } = readTailwindClass(el);
 
     editables.push({
       id,
-      type,
+      type: type as EditableItem["type"],
       content,
       colorVars: parseColorVars(el.getAttribute("data-color-vars") || ""),
       tailwindClass,
@@ -151,20 +181,11 @@ export function replaceAssetPathsInHtml(html: string, assetMap: Record<string, s
   Object.entries(assetMap).forEach(([oldPath, newUrl]) => {
     const escaped = oldPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-    updatedHtml = updatedHtml.replace(
-      new RegExp(`src=["']${escaped}["']`, "gi"),
-      `src="${newUrl}"`
-    );
+    updatedHtml = updatedHtml.replace(new RegExp(`src=["']${escaped}["']`, "gi"), `src="${newUrl}"`);
 
-    updatedHtml = updatedHtml.replace(
-      new RegExp(`href=["']${escaped}["']`, "gi"),
-      `href="${newUrl}"`
-    );
+    updatedHtml = updatedHtml.replace(new RegExp(`href=["']${escaped}["']`, "gi"), `href="${newUrl}"`);
 
-    updatedHtml = updatedHtml.replace(
-      new RegExp(`url\\(["']?${escaped}["']?\\)`, "gi"),
-      `url("${newUrl}")`
-    );
+    updatedHtml = updatedHtml.replace(new RegExp(`url\\(["']?${escaped}["']?\\)`, "gi"), `url("${newUrl}")`);
   });
 
   return updatedHtml;
@@ -173,12 +194,7 @@ export function replaceAssetPathsInHtml(html: string, assetMap: Record<string, s
 // ─────────────────────────────────────────────────────────
 // MAIN — Parse full HTML string into Template JSON
 // ─────────────────────────────────────────────────────────
-export function parseHtmlToTemplate(params: {
-  htmlString: string;
-  templateId: string;
-  templateName: string;
-  category: string;
-}): Template {
+export function parseHtmlToTemplate(params: { htmlString: string; templateId: string; templateName: string; category: string }): Template {
   const { htmlString, templateId, templateName, category } = params;
 
   const parser = new DOMParser();
@@ -223,10 +239,7 @@ export function injectCSSVariables(rawHtml: string, cssVariables: CSSVariables):
 
   const styleBlock = `<style id="lp-css-vars">\n:root {\n${varLines}\n}\n</style>`;
 
-  const cleaned = rawHtml.replace(
-    /<style[^>]*id=["']lp-css-vars["'][^>]*>[\s\S]*?<\/style>/gi,
-    ""
-  );
+  const cleaned = rawHtml.replace(/<style[^>]*id=["']lp-css-vars["'][^>]*>[\s\S]*?<\/style>/gi, "");
 
   if (cleaned.includes("</head>")) {
     return cleaned.replace("</head>", styleBlock + "\n</head>");
@@ -246,12 +259,7 @@ export function injectCSSVariables(rawHtml: string, cssVariables: CSSVariables):
 // ─────────────────────────────────────────────────────────
 // HELPER — Update a single editable's content in raw HTML
 // ─────────────────────────────────────────────────────────
-export function updateEditableInHtml(
-  rawHtml: string,
-  editableId: string,
-  newContent: string,
-  type: "text" | "image" | "link"
-): string {
+export function updateEditableInHtml(rawHtml: string, editableId: string, newContent: string, type: "text" | "image" | "link" | "svg"): string {
   const parser = new DOMParser();
   const doc = parser.parseFromString(rawHtml, "text/html");
   const el = doc.querySelector(`[data-editable="${editableId}"]`);
@@ -262,10 +270,36 @@ export function updateEditableInHtml(
     el.setAttribute("src", newContent);
   } else if (type === "link") {
     el.setAttribute("href", newContent);
+  } else if (type === "svg") {
+    const trimmed = newContent.trim();
+
+    if (el.tagName.toLowerCase() === "svg") {
+      const svgDoc = parser.parseFromString(trimmed, "image/svg+xml");
+      const newSvg = svgDoc.documentElement;
+
+      if (newSvg && newSvg.tagName.toLowerCase() === "svg") {
+        el.replaceWith(doc.importNode(newSvg, true));
+      } else {
+        el.outerHTML = trimmed;
+      }
+    } else {
+      const currentSvg = el.querySelector("svg");
+
+      if (currentSvg) {
+        const svgDoc = parser.parseFromString(trimmed, "image/svg+xml");
+        const newSvg = svgDoc.documentElement;
+
+        if (newSvg && newSvg.tagName.toLowerCase() === "svg") {
+          currentSvg.replaceWith(doc.importNode(newSvg, true));
+        } else {
+          el.innerHTML = trimmed;
+        }
+      } else {
+        el.innerHTML = trimmed;
+      }
+    }
   } else {
-    const textNodes = Array.from(el.childNodes).filter(
-      (n) => n.nodeType === Node.TEXT_NODE
-    );
+    const textNodes = Array.from(el.childNodes).filter((n) => n.nodeType === Node.TEXT_NODE);
 
     if (textNodes.length > 0) {
       textNodes[0].textContent = newContent;

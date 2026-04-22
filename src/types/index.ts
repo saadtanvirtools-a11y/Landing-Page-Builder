@@ -77,9 +77,11 @@ export interface CSSVariables {
   [varName: string]: string;
 }
 
+export type EditableType = "text" | "image" | "link" | "svg";
+
 export interface EditableItem {
   id: string;
-  type: "text" | "image" | "link";
+  type: EditableType;
   content: string;
   colorVars: Record<string, string>;
   tailwindClass: string;

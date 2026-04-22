@@ -55,6 +55,27 @@ function readTailwindClass(el: Element): { tailwindClass: string; styleChildSele
   return { tailwindClass: "", styleChildSelector: "" };
 }
 
+function extractSvgMarkup(el: Element): string {
+  if (el.tagName.toLowerCase() === "svg") {
+    return el.outerHTML.trim();
+  }
+
+  const directSvg = Array.from(el.children).find(
+    (child) => child.tagName.toLowerCase() === "svg"
+  );
+  if (directSvg) return directSvg.outerHTML.trim();
+
+  const nestedSvg = el.querySelector("svg");
+  if (nestedSvg) return nestedSvg.outerHTML.trim();
+
+  return (el.innerHTML || "").trim();
+}
+
+function isSvgMarkup(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.startsWith("<svg") && trimmed.includes("</svg>");
+}
+
 function readEditableContent(el: Element, type: string): string {
   if (type === "image") {
     return el.getAttribute("src") || (el as HTMLImageElement).src || "";
@@ -62,6 +83,17 @@ function readEditableContent(el: Element, type: string): string {
 
   if (type === "link") {
     return el.getAttribute("href") || "";
+  }
+
+  if (type === "svg") {
+    return extractSvgMarkup(el);
+  }
+
+  // ✅ Important:
+  // If a "text" editable contains an inline SVG, return the SVG markup instead of textContent.
+  const nestedSvg = el.querySelector("svg");
+  if (nestedSvg) {
+    return nestedSvg.outerHTML.trim();
   }
 
   return (el.textContent || "").trim();
@@ -96,7 +128,7 @@ function reparseBlockFromOwnHtml(
 
     return {
       id,
-      type: type as "text" | "image" | "link",
+      type: type as "text" | "image" | "link" | "svg",
       content,
       colorVars: parseColorVarsAttr(colorVarsRaw),
       tailwindClass,
@@ -136,7 +168,7 @@ function reparseBlock(fullHtml: string, blockId: string): Partial<ParsedBlock> {
 
     return {
       id,
-      type: type as "text" | "image" | "link",
+      type: type as "text" | "image" | "link" | "svg",
       content,
       colorVars: parseColorVarsAttr(e.getAttribute("data-color-vars") || ""),
       tailwindClass,
@@ -571,12 +603,39 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             el.setAttribute("src", newContent);
           } else if (editable.type === "link") {
             el.setAttribute("href", newContent);
-          } else {
-            const textNodes = Array.from(el.childNodes).filter((n) => n.nodeType === Node.TEXT_NODE);
-            if (textNodes.length > 0) {
-              textNodes[0].textContent = newContent;
+          } else if (editable.type === "svg") {
+            const svgDoc = parser.parseFromString(newContent.trim(), "image/svg+xml");
+            const newSvg = svgDoc.documentElement;
+
+            if (el.tagName.toLowerCase() === "svg") {
+              if (newSvg && newSvg.tagName.toLowerCase() === "svg") {
+                el.replaceWith(blockDoc.importNode(newSvg, true));
+              } else {
+                (el as HTMLElement).outerHTML = newContent;
+              }
             } else {
-              el.textContent = newContent;
+              const currentSvg = el.querySelector("svg");
+              if (currentSvg && newSvg && newSvg.tagName.toLowerCase() === "svg") {
+                currentSvg.replaceWith(blockDoc.importNode(newSvg, true));
+              } else {
+                (el as HTMLElement).innerHTML = newContent;
+              }
+            }
+          } else {
+            // ✅ Important:
+            // if pasted content is SVG markup, render it instead of showing raw code as text
+            if (isSvgMarkup(newContent)) {
+              (el as HTMLElement).innerHTML = newContent.trim();
+            } else {
+              const textNodes = Array.from(el.childNodes).filter(
+                (n) => n.nodeType === Node.TEXT_NODE
+              );
+
+              if (textNodes.length > 0) {
+                textNodes[0].textContent = newContent;
+              } else {
+                el.textContent = newContent;
+              }
             }
           }
         }
@@ -655,9 +714,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         if (styleChildSelector) {
           const childEl = targetEl.querySelector(styleChildSelector);
           if (childEl) childEl.className = cleanClassList;
-          else targetEl.className = cleanClassList;
+          else (targetEl as HTMLElement).className = cleanClassList;
         } else {
-          targetEl.className = cleanClassList;
+          (targetEl as HTMLElement).className = cleanClassList;
         }
       }
 
@@ -869,7 +928,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
                     }
                   }
 
-                  const { colorVars, editables, styles } = reparseBlockFromOwnHtml(blockRawHtml || "", block.blockId);
+                  const { colorVars, editables, styles } = reparseBlockFromOwnHtml(
+                    blockRawHtml || "",
+                    block.blockId
+                  );
                   return { ...block, rawHtml: blockRawHtml, colorVars, editables, styles };
                 })
               );
@@ -935,7 +997,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
                 }
               }
 
-              const { colorVars, editables, styles } = reparseBlockFromOwnHtml(blockRawHtml || "", block.blockId);
+              const { colorVars, editables, styles } = reparseBlockFromOwnHtml(
+                blockRawHtml || "",
+                block.blockId
+              );
               return { ...block, rawHtml: blockRawHtml, colorVars, editables, styles };
             })
           );
