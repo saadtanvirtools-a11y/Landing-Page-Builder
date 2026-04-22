@@ -1,6 +1,7 @@
-import { create } from 'zustand';
-import type { User } from '../types';  // ← ADD THIS
-
+import { create } from "zustand";
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "../firebase";
+import type { User } from "../types";
 
 interface AuthStore {
   user: User | null;
@@ -11,43 +12,64 @@ interface AuthStore {
   setAuth: (user: User, token: string) => void;
   logout: () => void;
   loadFromStorage: () => void;
+  refreshUserFromFirestore: () => Promise<void>; // ✅ NEW
 }
 
-export const useAuthStore = create<AuthStore>((set) => ({
+export const useAuthStore = create<AuthStore>((set, get) => ({
   user: null,
   token: null,
   isAuthenticated: false,
 
-  // Called after login/signup success
+  // ── Login / Signup ─────────────────────────────
   setAuth: (user, token) => {
-    // Save to localStorage
-    localStorage.setItem('token', token);
-    localStorage.setItem('user', JSON.stringify(user));
+    localStorage.setItem("token", token);
+    localStorage.setItem("user", JSON.stringify(user));
 
     set({ user, token, isAuthenticated: true });
   },
 
-  // Called on logout
+  // ── Logout ─────────────────────────────────────
   logout: () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+
     set({ user: null, token: null, isAuthenticated: false });
   },
 
-  // Called on app load — restore session from localStorage
+  // ── Load from localStorage ─────────────────────
   loadFromStorage: () => {
-    const token   = localStorage.getItem('token');
-    const userStr = localStorage.getItem('user');
+    const token = localStorage.getItem("token");
+    const userStr = localStorage.getItem("user");
 
     if (token && userStr) {
       try {
         const user = JSON.parse(userStr) as User;
         set({ user, token, isAuthenticated: true });
       } catch {
-        // Corrupted data — clear it
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
       }
+    }
+  },
+
+  // ── 🔥 NEW: Sync user with Firestore ───────────
+  refreshUserFromFirestore: async () => {
+    const { user } = get();
+    if (!user?.id) return;
+
+    try {
+      const snap = await getDoc(doc(db, "users", user.id));
+      if (!snap.exists()) return;
+
+      const freshUser = snap.data() as User;
+
+      // update both state + localStorage
+      localStorage.setItem("user", JSON.stringify(freshUser));
+      set({ user: freshUser });
+
+      console.log("[Auth] ✅ User refreshed from Firestore");
+    } catch (err) {
+      console.error("[Auth] ❌ Failed to refresh user:", err);
     }
   },
 }));

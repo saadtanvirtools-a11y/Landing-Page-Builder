@@ -7,7 +7,7 @@ import { db } from "../firebase";
 import { doc, getDoc } from "firebase/firestore";
 import type { Template } from "../types";
 
-// ✅ Fetch template from Firestore by ID
+// ✅ Fetch original template from Firestore by ID
 async function fetchTemplateFromFirestore(templateId: string): Promise<Template | null> {
   try {
     const snap = await getDoc(doc(db, "templates", templateId));
@@ -20,10 +20,11 @@ async function fetchTemplateFromFirestore(templateId: string): Promise<Template 
 }
 
 export default function EditorPage() {
-  const location  = useLocation();
-  const navigate  = useNavigate();
+  const location = useLocation();
+  const navigate = useNavigate();
+
   const { user, loadFromStorage: refreshAuthUser } = useAuthStore();
-  const { loadTemplate, loadFromStorage }          = useEditorStore();
+  const { loadTemplate, loadFromStorage } = useEditorStore();
 
   const [status, setStatus] = useState<"loading" | "ready" | "no-template" | "not-assigned">("loading");
 
@@ -34,7 +35,7 @@ export default function EditorPage() {
 
   useEffect(() => {
     const routeTemplateId: string | null = (location.state as any)?.templateId ?? null;
-    const templateId: string | null      = routeTemplateId ?? user?.assignedTemplateId ?? null;
+    const templateId: string | null = routeTemplateId ?? user?.assignedTemplateId ?? null;
 
     console.log("=== [EDITOR PAGE MOUNT] ===");
     console.log("[EditorPage] resolved templateId:", templateId);
@@ -45,51 +46,53 @@ export default function EditorPage() {
       return;
     }
 
-    // ── STEP 1: Check localStorage editor save first ──────────────────────
-    if (user?.id) {
-      try {
-        const raw  = localStorage.getItem(`editor_save_${user.id}`);
-        if (raw) {
-          const data  = JSON.parse(raw);
-          const saved = data.currentTemplate ?? null;
-          console.log("[EditorPage] saved.id:", saved?.id, "| needed:", templateId);
+    let cancelled = false;
 
-          if (saved?.id === templateId) {
-            loadFromStorage(user.id);
+    const init = async () => {
+      setStatus("loading");
+
+      // ── STEP 1: Try saved user project/localStorage through store loader ──
+      if (user?.id) {
+        try {
+          await loadFromStorage(user.id, templateId);
+
+          const loadedTemplate = useEditorStore.getState().currentTemplate;
+          console.log("[EditorPage] after loadFromStorage currentTemplate.id:", loadedTemplate?.id);
+
+          if (!cancelled && loadedTemplate?.id === templateId) {
             setStatus("ready");
-            console.log("[EditorPage] ✅ Loaded from localStorage editor save");
+            console.log("[EditorPage] ✅ Loaded editor state from userProjects/localStorage");
             return;
           }
+        } catch (e) {
+          console.error("[EditorPage] loadFromStorage error:", e);
         }
-      } catch (e) {
-        console.error("[EditorPage] localStorage error:", e);
       }
-    }
 
-    // ── STEP 2: Check in-memory store ─────────────────────────────────────
-    const storeState = useEditorStore.getState();
-    if (storeState.currentTemplate?.id === templateId) {
-      setStatus("ready");
-      console.log("[EditorPage] ✅ Using in-memory store");
-      return;
-    }
+      // ── STEP 2: Fallback to original template in Firestore ──────────────
+      console.log("[EditorPage] No saved project found, fetching original template:", templateId);
 
-    // ── STEP 3: Fresh load from Firestore ─────────────────────────────────
-    console.log("[EditorPage] Fetching template from Firestore:", templateId);
-    setStatus("loading");
+      const found = await fetchTemplateFromFirestore(templateId);
 
-    fetchTemplateFromFirestore(templateId).then((found) => {
+      if (cancelled) return;
+
       if (!found) {
         console.warn("[EditorPage] ❌ Template not found in Firestore");
         setStatus("no-template");
         return;
       }
+
       loadTemplate(found);
       setStatus("ready");
-      console.log("[EditorPage] ✅ Fresh load from Firestore");
-    });
+      console.log("[EditorPage] ✅ Fresh load from templates collection");
+    };
 
-  }, [location.state, user?.assignedTemplateId, user?.id]);
+    init();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [location.state, user?.assignedTemplateId, user?.id, loadTemplate, loadFromStorage]);
 
   // ── Loading screen ────────────────────────────────────────────────────────
   if (status === "loading") {

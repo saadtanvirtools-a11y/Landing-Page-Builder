@@ -1,10 +1,22 @@
 import { useState, useRef, useEffect } from "react";
 import JSZip from "jszip";
-import { Upload, FileArchive, CheckCircle, XCircle, Loader2, AlertTriangle, Info, AlertCircle, ChevronDown, ChevronUp, Image } from "lucide-react";
+import {
+  Upload,
+  FileArchive,
+  CheckCircle,
+  XCircle,
+  Loader2,
+  AlertTriangle,
+  Info,
+  AlertCircle,
+  ChevronDown,
+  ChevronUp,
+  Image,
+} from "lucide-react";
 import { parseHtmlToTemplate } from "../../utils/htmlParser";
-import { db, storage } from "../../firebase";
+import { db } from "../../firebase";
 import { collection, getDocs, setDoc, doc, query, where } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { uploadTemplateImage } from "../../api/supabaseStorage";
 
 interface Props {
   onUploaded: () => void;
@@ -61,8 +73,12 @@ async function extractImages(zip: JSZip): Promise<Record<string, string>> {
   const imageFiles = Object.entries(zip.files).filter(([path, file]) => {
     if (file.dir) return false;
     const lower = path.toLowerCase();
-    return lower.includes("images/") && Object.keys(IMAGE_MIME).some((ext) => lower.endsWith(`.${ext}`));
+    return (
+      lower.includes("images/") &&
+      Object.keys(IMAGE_MIME).some((ext) => lower.endsWith(`.${ext}`))
+    );
   });
+
   await Promise.all(
     imageFiles.map(async ([path, file]) => {
       try {
@@ -74,71 +90,78 @@ async function extractImages(zip: JSZip): Promise<Record<string, string>> {
         imageMap[`./images/${filename}`] = dataUrl;
         imageMap[`../images/${filename}`] = dataUrl;
         imageMap[filename] = dataUrl;
+
         if (path.startsWith("public/")) {
-          imageMap[path.replace(/^public\//, "")] = dataUrl; // public/images/foo.png → images/foo.png
-          imageMap[`/${path.replace(/^public\//, "")}`] = dataUrl; // /images/foo.png
+          imageMap[path.replace(/^public\//, "")] = dataUrl;
+          imageMap[`/${path.replace(/^public\//, "")}`] = dataUrl;
         }
       } catch (err) {
         console.warn(`[extractImages] Failed: ${path}`, err);
       }
-    }),
+    })
   );
+
   return imageMap;
 }
 
-// ── Upload images to Firebase Storage (avoids Firestore 1MB limit) ────
-async function uploadImagesToStorage(zip: JSZip, templateId: string): Promise<Record<string, string>> {
+// ── Upload images to Supabase Storage ─────────────────────────────
+async function uploadImagesToSupabase(
+  zip: JSZip,
+  templateId: string
+): Promise<{ urlMap: Record<string, string>; uploadedImageCount: number }> {
   const urlMap: Record<string, string> = {};
+
   const imageFiles = Object.entries(zip.files).filter(([path, file]) => {
     if (file.dir) return false;
     const lower = path.toLowerCase();
-    return lower.includes("images/") && Object.keys(IMAGE_MIME).some((ext) => lower.endsWith(`.${ext}`));
+    return (
+      lower.includes("images/") &&
+      Object.keys(IMAGE_MIME).some((ext) => lower.endsWith(`.${ext}`))
+    );
   });
 
-  console.log(`[uploadImagesToStorage] Uploading ${imageFiles.length} images to Firebase Storage (5 concurrent max)`);
+  console.log(`[uploadImagesToSupabase] Found ${imageFiles.length} image(s)`);
 
-  // ✅ Upload in parallel batches of 5
-  const MAX_CONCURRENT = 5;
-  for (let i = 0; i < imageFiles.length; i += MAX_CONCURRENT) {
-    const batch = imageFiles.slice(i, i + MAX_CONCURRENT);
-    await Promise.all(
-      batch.map(async ([path, file]) => {
-        try {
-          const filename = path.split("/").pop()!;
-          const arrayBuffer = await file.async("arraybuffer");
-          const blob = new Blob([arrayBuffer], { type: getImageMime(filename) });
+  let uploadedImageCount = 0;
 
-          // Upload to: templates/{templateId}/images/{filename}
-          const fileRef = ref(storage, `templates/${templateId}/images/${filename}`);
-          await uploadBytes(fileRef, blob);
-          const downloadUrl = await getDownloadURL(fileRef);
+  for (const [path, file] of imageFiles) {
+    const filename = path.split("/").pop()!;
+    try {
+      const arrayBuffer = await file.async("arraybuffer");
+      const mimeType = getImageMime(filename);
+      const uploadFile = new File([arrayBuffer], filename, { type: mimeType });
 
-          // Store with multiple path variants to match all possible img src/url() patterns
-          urlMap[path] = downloadUrl;
-          urlMap[`images/${filename}`] = downloadUrl;
-          urlMap[`/images/${filename}`] = downloadUrl;
-          urlMap[`./images/${filename}`] = downloadUrl;
-          urlMap[`../images/${filename}`] = downloadUrl;
-          urlMap[filename] = downloadUrl;
-          if (path.startsWith("public/")) {
-            urlMap[path.replace(/^public\//, "")] = downloadUrl;
-            urlMap[`/${path.replace(/^public\//, "")}`] = downloadUrl;
-          }
+      console.log(`[uploadImagesToSupabase] Uploading: ${path}`);
 
-          console.log(`[uploadImagesToStorage] ✅ Uploaded: ${filename}`);
-        } catch (err) {
-          console.warn(`[uploadImagesToStorage] Failed to upload: ${path}`, err);
-        }
-      }),
-    );
+      const uploaded = await uploadTemplateImage(uploadFile, templateId);
+
+      urlMap[path] = uploaded.url;
+      urlMap[`images/${filename}`] = uploaded.url;
+      urlMap[`/images/${filename}`] = uploaded.url;
+      urlMap[`./images/${filename}`] = uploaded.url;
+      urlMap[`../images/${filename}`] = uploaded.url;
+      urlMap[filename] = uploaded.url;
+
+      if (path.startsWith("public/")) {
+        urlMap[path.replace(/^public\//, "")] = uploaded.url;
+        urlMap[`/${path.replace(/^public\//, "")}`] = uploaded.url;
+      }
+
+      uploadedImageCount++;
+      console.log(`[uploadImagesToSupabase] ✅ Success: ${filename}`, uploaded.url);
+    } catch (err: any) {
+      console.error(`[uploadImagesToSupabase] ❌ Failed: ${path}`, err);
+      throw new Error(`Image upload failed for ${filename}: ${err?.message || "Unknown error"}`);
+    }
   }
 
-  console.log(`[uploadImagesToStorage] Complete: ${Object.keys(urlMap).length / 8} image(s) uploaded`);
-  return urlMap;
+  console.log(`[uploadImagesToSupabase] Complete: ${uploadedImageCount} image(s) uploaded`);
+  return { urlMap, uploadedImageCount };
 }
 
 function embedImagesIntoHtml(html: string, imageMap: Record<string, string>): string {
   if (!Object.keys(imageMap).length) return html;
+
   let result = html;
   Object.entries(imageMap).forEach(([path, dataUrl]) => {
     const esc = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -146,26 +169,38 @@ function embedImagesIntoHtml(html: string, imageMap: Record<string, string>): st
     result = result.replace(new RegExp(`url\\(["']?${esc}["']?\\)`, "gi"), `url("${dataUrl}")`);
     result = result.replace(new RegExp(`href=["']${esc}["']`, "gi"), `href="${dataUrl}"`);
   });
+
   return result;
 }
 
-// ─────────────────────────────────────────────────────────────
+function embedImagesIntoCss(css: string, imageMap: Record<string, string>): string {
+  if (!css || !Object.keys(imageMap).length) return css;
+
+  let result = css;
+  Object.entries(imageMap).forEach(([path, dataUrl]) => {
+    const esc = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    result = result.replace(new RegExp(`url\\(["']?${esc}["']?\\)`, "gi"), `url("${dataUrl}")`);
+  });
+
+  return result;
+}
+
 // ✅ KEY FIX: Strip compiled Tailwind, keep ONLY:
 //   1. :root { } CSS variable blocks
 //   2. Rules with base64 data: URLs (background images)
 //   3. @font-face rules
 //   4. Custom non-Tailwind rules
-// The canvas injects Tailwind CDN — we must NOT duplicate it.
-// Injecting @layer on top of CDN Tailwind breaks the cascade
-// and suppresses background-image rules entirely.
-// ─────────────────────────────────────────────────────────────
 function extractCustomCssOnly(css: string): string {
   if (!css || !css.trim()) return "";
 
-  const isTailwindOutput = css.includes("tailwindcss") || css.includes("@layer theme") || css.includes("@layer base") || css.includes("@layer utilities") || css.includes("@layer components");
+  const isTailwindOutput =
+    css.includes("tailwindcss") ||
+    css.includes("@layer theme") ||
+    css.includes("@layer base") ||
+    css.includes("@layer utilities") ||
+    css.includes("@layer components");
 
   if (!isTailwindOutput) {
-    // Not Tailwind-compiled — keep as-is (pure custom CSS)
     console.log("[extractCustomCssOnly] Not Tailwind output — keeping full CSS");
     return css;
   }
@@ -173,25 +208,18 @@ function extractCustomCssOnly(css: string): string {
   console.log(`[extractCustomCssOnly] Tailwind detected — extracting custom rules only`);
   const kept: string[] = [];
 
-  // ── 1. :root { } blocks ───────────────────────────────
   const rootRegex = /:root\s*\{([^}]+)\}/g;
   let m: RegExpExecArray | null;
   while ((m = rootRegex.exec(css)) !== null) {
     kept.push(`:root {\n${m[1]}\n}`);
   }
 
-  // ── 2. Rules containing base64 data: URLs ─────────────
-  // These are background-image: url("data:image/...") rules
-  // We need to extract the full selector + block
   const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
-  // Match: selector { ... url(data:...) ... }
-  // Use a simple state machine to handle nested braces
   let i = 0;
   while (i < cssWithoutComments.length) {
     const openBrace = cssWithoutComments.indexOf("{", i);
     if (openBrace === -1) break;
 
-    // Find matching close brace (handle nesting)
     let depth = 1;
     let j = openBrace + 1;
     while (j < cssWithoutComments.length && depth > 0) {
@@ -199,13 +227,13 @@ function extractCustomCssOnly(css: string): string {
       else if (cssWithoutComments[j] === "}") depth--;
       j++;
     }
+
     const closeBrace = j - 1;
     const block = cssWithoutComments.slice(openBrace + 1, closeBrace);
     const selector = cssWithoutComments.slice(i, openBrace).trim();
 
     if (block.includes("data:image/") || block.includes("data:font/")) {
       const rule = `${selector} {\n${block.trim()}\n}`;
-      // Avoid duplicates
       if (!kept.some((k) => k.trim() === rule.trim())) {
         kept.push(rule);
       }
@@ -214,24 +242,17 @@ function extractCustomCssOnly(css: string): string {
     i = closeBrace + 1;
   }
 
-  // ── 3. @font-face rules ───────────────────────────────
   const fontFaceRegex = /@font-face\s*\{[^}]+\}/g;
   while ((m = fontFaceRegex.exec(css)) !== null) {
     kept.push(m[0]);
   }
 
   const result = kept.join("\n\n").trim();
-  console.log(`[extractCustomCssOnly] ${(css.length / 1024).toFixed(1)}KB → ${(result.length / 1024).toFixed(1)}KB`, `| ${kept.length} rule(s) kept`);
-  return result;
-}
+  console.log(
+    `[extractCustomCssOnly] ${(css.length / 1024).toFixed(1)}KB → ${(result.length / 1024).toFixed(1)}KB`,
+    `| ${kept.length} rule(s) kept`
+  );
 
-function embedImagesIntoCss(css: string, imageMap: Record<string, string>): string {
-  if (!css || !Object.keys(imageMap).length) return css;
-  let result = css;
-  Object.entries(imageMap).forEach(([path, dataUrl]) => {
-    const esc = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    result = result.replace(new RegExp(`url\\(["']?${esc}["']?\\)`, "gi"), `url("${dataUrl}")`);
-  });
   return result;
 }
 
@@ -272,12 +293,19 @@ function validateHtmlStructure(htmlString: string): ValidationCheck[] {
 
   const blocks = Array.from(doc.querySelectorAll("[data-block]"));
   const blockIds = blocks.map((b) => b.getAttribute("data-block")!).filter(Boolean);
+
   checks.push({
     label: "Has data-block sections",
     ok: blocks.length > 0,
     blocking: true,
-    message: blocks.length > 0 ? `Found ${blocks.length} block(s): ${blockIds.slice(0, 5).join(", ")}${blockIds.length > 5 ? "…" : ""}` : "No [data-block] elements found.",
-    detail: blocks.length === 0 ? `Every section must have a data-block attribute.\nExample: <section data-block="hero">` : undefined,
+    message:
+      blocks.length > 0
+        ? `Found ${blocks.length} block(s): ${blockIds.slice(0, 5).join(", ")}${blockIds.length > 5 ? "…" : ""}`
+        : "No [data-block] elements found.",
+    detail:
+      blocks.length === 0
+        ? `Every section must have a data-block attribute.\nExample: <section data-block="hero">`
+        : undefined,
   });
 
   const duplicates = blockIds.filter((id, i) => blockIds.indexOf(id) !== i);
@@ -287,7 +315,10 @@ function validateHtmlStructure(htmlString: string): ValidationCheck[] {
     ok: duplicates.length === 0,
     blocking: true,
     message: duplicates.length === 0 ? "All block IDs are unique ✓" : `Duplicate IDs: ${uniqueDups.join(", ")}`,
-    detail: duplicates.length > 0 ? `Each data-block must be unique.\nDuplicates: ${uniqueDups.join(", ")}` : undefined,
+    detail:
+      duplicates.length > 0
+        ? `Each data-block must be unique.\nDuplicates: ${uniqueDups.join(", ")}`
+        : undefined,
   });
 
   const editables = Array.from(doc.querySelectorAll("[data-editable]"));
@@ -296,7 +327,10 @@ function validateHtmlStructure(htmlString: string): ValidationCheck[] {
     ok: editables.length > 0,
     blocking: true,
     message: editables.length > 0 ? `Found ${editables.length} editable field(s)` : "No [data-editable] elements found.",
-    detail: editables.length === 0 ? `Add data-editable and data-editable-type to editable elements.` : undefined,
+    detail:
+      editables.length === 0
+        ? `Add data-editable and data-editable-type to editable elements.`
+        : undefined,
   });
 
   const missingType = editables.filter((e) => !e.getAttribute("data-editable-type"));
@@ -305,7 +339,10 @@ function validateHtmlStructure(htmlString: string): ValidationCheck[] {
     ok: missingType.length === 0,
     blocking: true,
     message: missingType.length === 0 ? "All editable elements have a type ✓" : `${missingType.length} missing data-editable-type`,
-    detail: missingType.length > 0 ? `Every data-editable must have data-editable-type="text", "image", or "link".` : undefined,
+    detail:
+      missingType.length > 0
+        ? `Every data-editable must have data-editable-type="text", "image", or "link".`
+        : undefined,
   });
 
   const validTypes = ["text", "image", "link"];
@@ -324,18 +361,26 @@ function validateHtmlStructure(htmlString: string): ValidationCheck[] {
   const styleContent = Array.from(doc.querySelectorAll("style"))
     .map((s) => s.textContent || "")
     .join("\n");
+
   const rootVarMatches = styleContent.match(/:root\s*\{([^}]+)\}/);
   const cssVarNames: string[] = [];
   if (rootVarMatches?.[1]) {
     const varLines = rootVarMatches[1].match(/--([\w-]+)\s*:/g);
     if (varLines) varLines.forEach((v) => cssVarNames.push(v.replace(":", "").trim()));
   }
+
   checks.push({
     label: "Has CSS variables in :root",
     ok: cssVarNames.length > 0,
     blocking: true,
-    message: cssVarNames.length > 0 ? `Found ${cssVarNames.length} CSS var(s): ${cssVarNames.slice(0, 4).join(", ")}${cssVarNames.length > 4 ? "…" : ""}` : "No :root CSS variables found.",
-    detail: cssVarNames.length === 0 ? `Add :root { --primary: #6366f1; } in a <style> tag.` : undefined,
+    message:
+      cssVarNames.length > 0
+        ? `Found ${cssVarNames.length} CSS var(s): ${cssVarNames.slice(0, 4).join(", ")}${cssVarNames.length > 4 ? "…" : ""}`
+        : "No :root CSS variables found.",
+    detail:
+      cssVarNames.length === 0
+        ? `Add :root { --primary: #6366f1; } in a <style> tag.`
+        : undefined,
   });
 
   return checks;
@@ -346,28 +391,66 @@ async function validateZip(file: File): Promise<{ result: ValidationResult; html
   let htmlString: string | null = null;
   let imageCount = 0;
 
-  checks.push({ label: "File format is .zip", ok: file.name.endsWith(".zip"), blocking: true, message: file.name.endsWith(".zip") ? "Valid ZIP ✓" : "Must be .zip" });
+  checks.push({
+    label: "File format is .zip",
+    ok: file.name.endsWith(".zip"),
+    blocking: true,
+    message: file.name.endsWith(".zip") ? "Valid ZIP ✓" : "Must be .zip",
+  });
+
   const sizeMB = file.size / (1024 * 1024);
-  checks.push({ label: "File size under 10MB", ok: sizeMB < 10, blocking: true, message: sizeMB < 10 ? `${sizeMB.toFixed(2)} MB ✓` : `${sizeMB.toFixed(2)} MB — too large` });
+  checks.push({
+    label: "File size under 10MB",
+    ok: sizeMB < 10,
+    blocking: true,
+    message: sizeMB < 10 ? `${sizeMB.toFixed(2)} MB ✓` : `${sizeMB.toFixed(2)} MB — too large`,
+  });
 
   try {
     const zip = await JSZip.loadAsync(file);
     const files = Object.keys(zip.files);
+
     const htmlFile = files.find((f) => f.endsWith("index.html"));
-    const cssFile = files.find((f) => f.includes("public/") && f.endsWith(".css"));
+    const cssFile = files.find((f) => f.includes("public/") && f.endsWith("style.css"));
+    const jsFile = files.find((f) => f.includes("public/") && f.endsWith("main.js"));
 
     imageCount = files.filter((f) => {
       const lower = f.toLowerCase();
-      return lower.includes("images/") && Object.keys(IMAGE_MIME).some((ext) => lower.endsWith(`.${ext}`)) && !zip.files[f].dir;
+      return (
+        lower.includes("images/") &&
+        Object.keys(IMAGE_MIME).some((ext) => lower.endsWith(`.${ext}`)) &&
+        !zip.files[f].dir
+      );
     }).length;
 
-    checks.push({ label: "Contains index.html", ok: !!htmlFile, blocking: true, message: htmlFile ? `Found: ${htmlFile} ✓` : "index.html missing" });
-    checks.push({ label: "Contains public/style.css", ok: !!cssFile, blocking: true, message: cssFile ? `Found: ${cssFile} ✓` : "public/style.css missing" });
+    checks.push({
+      label: "Contains index.html",
+      ok: !!htmlFile,
+      blocking: true,
+      message: htmlFile ? `Found: ${htmlFile} ✓` : "index.html missing",
+    });
+
+    // ✅ made optional
+    checks.push({
+      label: "Contains public/style.css (optional)",
+      ok: true,
+      blocking: false,
+      message: cssFile ? `Found: ${cssFile} ✓` : "No public/style.css — continuing without CSS file",
+    });
+
+    // ✅ made optional
+    checks.push({
+      label: "Contains public/main.js (optional)",
+      ok: true,
+      blocking: false,
+      message: jsFile ? `Found: ${jsFile} ✓` : "No public/main.js — continuing without JS file",
+    });
+
     checks.push({
       label: "Images folder (optional)",
       ok: imageCount > 0,
       blocking: false,
-      message: imageCount > 0 ? `${imageCount} image(s) found — will be embedded as base64 ✓` : "No images/ folder",
+      message: imageCount > 0 ? `${imageCount} image(s) found — will be uploaded to Supabase ✓` : "No images/ folder",
     });
 
     if (htmlFile) {
@@ -375,20 +458,95 @@ async function validateZip(file: File): Promise<{ result: ValidationResult; html
       checks.push(...validateHtmlStructure(htmlString));
     }
   } catch {
-    checks.push({ label: "ZIP is readable", ok: false, blocking: true, message: "Could not open ZIP" });
+    checks.push({
+      label: "ZIP is readable",
+      ok: false,
+      blocking: true,
+      message: "Could not open ZIP",
+    });
   }
 
   const blockingFailed = checks.filter((c) => c.blocking && !c.ok);
+
   return {
-    result: { passed: blockingFailed.length === 0, checks, warnings: checks.filter((c) => !c.blocking && !c.ok).length, errors: blockingFailed.length },
+    result: {
+      passed: blockingFailed.length === 0,
+      checks,
+      warnings: checks.filter((c) => !c.blocking && !c.ok).length,
+      errors: blockingFailed.length,
+    },
     htmlString,
     imageCount,
   };
 }
 
+// ✅ Remove undefined recursively for Firestore safety
+function stripUndefinedDeep<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => stripUndefinedDeep(item))
+      .filter((item) => item !== undefined) as T;
+  }
+
+  if (value && typeof value === "object") {
+    const result: Record<string, any> = {};
+    Object.entries(value as Record<string, any>).forEach(([key, val]) => {
+      if (val === undefined) return;
+      result[key] = stripUndefinedDeep(val);
+    });
+    return result as T;
+  }
+
+  return value;
+}
+
+// ✅ Normalize template before Firestore save
+function buildFirestoreSafeTemplate(template: any) {
+  return stripUndefinedDeep({
+    ...template,
+    rawHtml: template.rawHtml || "",
+    rawCss: template.rawCss || "",
+    rawJs: template.rawJs || "",
+    cssVariables: template.cssVariables || {},
+    blocks: (template.blocks || []).map((block: any) => ({
+      ...block,
+      blockId: block.blockId || "",
+      blockName: block.blockName || "",
+      blockOrder: typeof block.blockOrder === "number" ? block.blockOrder : 0,
+      removable: typeof block.removable === "boolean" ? block.removable : true,
+      colorVars: block.colorVars || {},
+      rawHtml: block.rawHtml || "",
+      sourceTemplateId: block.sourceTemplateId || "",
+      sourceTemplateName: block.sourceTemplateName || "",
+      styles: block.styles || {},
+      editables: (block.editables || []).map((editable: any) => ({
+        ...editable,
+        id: editable.id || "",
+        type: editable.type || "text",
+        content: editable.content || "",
+        colorVars: editable.colorVars || {},
+        tailwindClass: editable.tailwindClass || "",
+        styleProps: editable.styleProps || "",
+        styleId: editable.styleId || "",
+        styleChildSelector: editable.styleChildSelector || "",
+      })),
+    })),
+    pageScripts: {
+      gtmId: template.pageScripts?.gtmId || "",
+      headScripts: template.pageScripts?.headScripts || "",
+      bodyScripts: template.pageScripts?.bodyScripts || "",
+      pageTitle: template.pageScripts?.pageTitle || "",
+      faviconUrl: template.pageScripts?.faviconUrl || "",
+      metaDescription: template.pageScripts?.metaDescription || "",
+      googleAnalyticsId: template.pageScripts?.googleAnalyticsId || "",
+    },
+  });
+}
+
 function CheckRow({ check }: { check: ValidationCheck }) {
   const [expanded, setExpanded] = useState(false);
   const isWarning = !check.blocking && !check.ok;
+
   return (
     <div
       className={`rounded-lg border text-xs overflow-hidden transition-all
@@ -402,22 +560,35 @@ function CheckRow({ check }: { check: ValidationCheck }) {
         ) : (
           <XCircle size={13} className="text-red-400 mt-0.5 shrink-0" />
         )}
+
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
-            <span className={`font-semibold ${check.ok ? "text-green-700" : isWarning ? "text-amber-700" : "text-red-600"}`}>{check.label}</span>
-            {isWarning && <span className="shrink-0 text-xs bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full font-bold">warning</span>}
+            <span className={`font-semibold ${check.ok ? "text-green-700" : isWarning ? "text-amber-700" : "text-red-600"}`}>
+              {check.label}
+            </span>
+            {isWarning && (
+              <span className="shrink-0 text-xs bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full font-bold">
+                warning
+              </span>
+            )}
           </div>
-          <p className={`mt-0.5 ${check.ok ? "text-green-600" : isWarning ? "text-amber-600" : "text-red-500"}`}>{check.message}</p>
+          <p className={`mt-0.5 ${check.ok ? "text-green-600" : isWarning ? "text-amber-600" : "text-red-500"}`}>
+            {check.message}
+          </p>
         </div>
+
         {check.detail && !check.ok && (
           <button onClick={() => setExpanded(!expanded)} className="shrink-0 text-gray-400 hover:text-gray-600 mt-0.5">
             {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
           </button>
         )}
       </div>
+
       {expanded && check.detail && (
         <div className="px-3 pb-2 border-t border-current/10">
-          <pre className={`text-xs whitespace-pre-wrap font-mono mt-1.5 leading-relaxed ${isWarning ? "text-amber-600" : "text-red-500"}`}>{check.detail}</pre>
+          <pre className={`text-xs whitespace-pre-wrap font-mono mt-1.5 leading-relaxed ${isWarning ? "text-amber-600" : "text-red-500"}`}>
+            {check.detail}
+          </pre>
         </div>
       )}
     </div>
@@ -445,10 +616,12 @@ export default function TemplateUpload({ onUploaded }: Props) {
       setLiveNameDup(null);
       return;
     }
+
     const timer = setTimeout(async () => {
       const dup = await findDuplicateByName(templateName);
       setLiveNameDup(dup);
     }, 400);
+
     return () => clearTimeout(timer);
   }, [templateName]);
 
@@ -474,6 +647,7 @@ export default function TemplateUpload({ onUploaded }: Props) {
         return;
       }
     }
+
     setUploadState({ status: "idle", message: "", progress: 0 });
   }
 
@@ -494,6 +668,7 @@ export default function TemplateUpload({ onUploaded }: Props) {
         return;
       }
     }
+
     if (!overrideNameCheck) {
       const nameDup = await findDuplicateByName(templateName);
       if (nameDup) {
@@ -503,6 +678,7 @@ export default function TemplateUpload({ onUploaded }: Props) {
     }
 
     setUploadState({ status: "uploading", message: "Reading ZIP...", progress: 15 });
+
     try {
       const zip = await JSZip.loadAsync(selectedFile);
       const files = Object.keys(zip.files);
@@ -511,66 +687,82 @@ export default function TemplateUpload({ onUploaded }: Props) {
 
       const htmlFile = files.find((f) => f.endsWith("index.html"));
       if (!htmlFile) throw new Error("index.html not found in ZIP");
+
       let htmlString = await zip.files[htmlFile].async("string");
 
       const cssFile = files.find((f) => f.includes("public/") && f.endsWith("style.css"));
       let cssString = cssFile ? await zip.files[cssFile].async("string") : "";
 
-      const jsFile = files.find((f) => f.includes("public/") && f.endsWith(".js"));
+      const jsFile = files.find((f) => f.includes("public/") && f.endsWith("main.js"));
       const jsString = jsFile ? await zip.files[jsFile].async("string") : "";
 
-      // ✅ Upload images to Firebase Storage (NOT base64) ────────────────────────────
-      setUploadState({ status: "uploading", message: "Uploading images to Firebase Storage...", progress: 45 });
-      const templateId = `tpl_${Date.now()}`;
-      const imageUrlMap = await uploadImagesToStorage(zip, templateId);
-      const uploadedImageCount = Object.keys(imageUrlMap).length / 8; // 8 variants per image
+      setUploadState({ status: "uploading", message: "Uploading images to Supabase...", progress: 45 });
+      const templateId = `tpl-${Date.now()}`;
+      const { urlMap: imageUrlMap, uploadedImageCount } = await uploadImagesToSupabase(zip, templateId);
 
       if (Object.keys(imageUrlMap).length > 0) {
         htmlString = embedImagesIntoHtml(htmlString, imageUrlMap);
         cssString = embedImagesIntoCss(cssString, imageUrlMap);
-        console.log(`[TemplateUpload] ✅ Embedded ${Math.round(uploadedImageCount)} image URLs from Firebase Storage`);
+        console.log(`[TemplateUpload] ✅ Embedded ${uploadedImageCount} image URL(s) from Supabase`);
       }
 
-      // ✅ CRITICAL: Strip compiled Tailwind from CSS
-      // Keep ONLY: :root vars, base64 image rules, @font-face
-      // Reason: Canvas injects Tailwind CDN — injecting @layer CSS
-      // on top of CDN breaks cascade and hides background images
       setUploadState({ status: "uploading", message: "Processing CSS...", progress: 60 });
       const strippedCss = extractCustomCssOnly(cssString);
-      console.log(`[TemplateUpload] CSS: ${(cssString.length / 1024).toFixed(1)}KB → ${(strippedCss.length / 1024).toFixed(1)}KB after stripping Tailwind`);
+
+      console.log(
+        `[TemplateUpload] CSS: ${(cssString.length / 1024).toFixed(1)}KB → ${(strippedCss.length / 1024).toFixed(1)}KB after stripping Tailwind`
+      );
 
       setUploadState({ status: "uploading", message: "Parsing HTML structure...", progress: 70 });
 
-      const parsedTemplate = parseHtmlToTemplate({ htmlString, templateId, templateName: templateName.trim(), category });
+      const parsedTemplate = parseHtmlToTemplate({
+        htmlString,
+        templateId,
+        templateName: templateName.trim(),
+        category,
+      });
 
-      const templateWithAssets = {
+      const templateWithAssets = buildFirestoreSafeTemplate({
         ...parsedTemplate,
         rawHtml: htmlString,
-        rawCss: strippedCss, // ✅ Only custom CSS — no Tailwind bloat
-        ...(jsString && { rawJs: jsString }),
-      };
+        rawCss: strippedCss,
+        rawJs: jsString || "",
+      });
 
       setUploadState({ status: "uploading", message: "Checking document size...", progress: 80 });
+
       const docBytes = new Blob([JSON.stringify(templateWithAssets)]).size;
-      console.log(`[TemplateUpload] Document size: ${(docBytes / 1024 / 1024).toFixed(2)} MB (images stored separately in Firebase Storage)`);
+      console.log(`[TemplateUpload] Document size: ${(docBytes / 1024 / 1024).toFixed(2)} MB`);
+
       if (docBytes > 900_000) {
-        throw new Error(`Document is still ${(docBytes / 1024 / 1024).toFixed(1)} MB. Please reduce CSS or contact support.`);
+        throw new Error(
+          `Document is still ${(docBytes / 1024 / 1024).toFixed(1)} MB. Please reduce CSS or contact support.`
+        );
       }
 
       setUploadState({ status: "uploading", message: "Saving to Firestore...", progress: 90 });
       await setDoc(doc(db, "templates", templateId), templateWithAssets);
 
-      const imgMsg = uploadedImageCount > 0 ? ` · ${Math.round(uploadedImageCount)} image(s) uploaded to Firebase Storage` : "";
+      const imgMsg = uploadedImageCount > 0 ? ` · ${uploadedImageCount} image(s) uploaded to Supabase` : "";
       const cssMsg = strippedCss ? ` · custom CSS saved` : "";
+      const jsMsg = jsString ? ` · JavaScript saved` : "";
+
       setUploadState({
         status: "success",
-        message: `Template saved! ${templateWithAssets.blocks.length} blocks · ${Object.keys(templateWithAssets.cssVariables).length} CSS vars${imgMsg}${cssMsg}.`,
+        message: `Template saved! ${templateWithAssets.blocks.length} blocks · ${Object.keys(
+          templateWithAssets.cssVariables
+        ).length} CSS vars${imgMsg}${cssMsg}${jsMsg}.`,
         progress: 100,
       });
+
       onUploaded();
       setTimeout(() => handleReset(), 3500);
     } catch (err: any) {
-      setUploadState({ status: "error", message: `Upload failed: ${err?.message ?? "Unknown error"}`, progress: 0 });
+      setUploadState({
+        status: "error",
+        message: `Upload failed: ${err?.message ?? "Unknown error"}`,
+        progress: 0,
+      });
     }
   }
 
@@ -595,6 +787,7 @@ export default function TemplateUpload({ onUploaded }: Props) {
 
   const isUploading = uploadState.status === "uploading";
   const isValidating = uploadState.status === "validating";
+
   const canUpload =
     !!selectedFile &&
     !!templateName.trim() &&
@@ -605,7 +798,10 @@ export default function TemplateUpload({ onUploaded }: Props) {
     !(!!fileDup && !fileOverride) &&
     !(!!liveNameDup && !nameOverride);
 
-  const sortedChecks = validation ? [...validation.checks].sort((a, b) => (!a.ok && b.ok ? -1 : a.ok && !b.ok ? 1 : 0)) : [];
+  const sortedChecks = validation
+    ? [...validation.checks].sort((a, b) => (!a.ok && b.ok ? -1 : a.ok && !b.ok ? 1 : 0))
+    : [];
+
   const visibleChecks = showAllChecks ? sortedChecks : sortedChecks.slice(0, 5);
 
   return (
@@ -613,13 +809,14 @@ export default function TemplateUpload({ onUploaded }: Props) {
       <div className="px-6 py-4 bg-gradient-to-r from-indigo-600 to-violet-600">
         <h3 className="text-base font-bold text-white">Upload Template</h3>
         <p className="text-xs text-indigo-200 mt-0.5">
-          ZIP must contain <code className="bg-white/20 px-1 rounded">index.html</code>, <code className="bg-white/20 px-1 rounded">public/style.css</code> and optionally{" "}
-          <code className="bg-white/20 px-1 rounded">images/</code>
+          ZIP must contain <code className="bg-white/20 px-1 rounded">index.html</code>, optional{" "}
+          <code className="bg-white/20 px-1 rounded">images/</code>, optional{" "}
+          <code className="bg-white/20 px-1 rounded">public/style.css</code> and optional{" "}
+          <code className="bg-white/20 px-1 rounded">public/main.js</code>
         </p>
       </div>
 
       <div className="p-6 space-y-5">
-        {/* Template Name */}
         <div>
           <label className="text-xs font-bold text-gray-600 block mb-1.5 uppercase tracking-wide">
             Template Name <span className="text-red-500">*</span>
@@ -638,7 +835,6 @@ export default function TemplateUpload({ onUploaded }: Props) {
           />
         </div>
 
-        {/* File duplicate warning */}
         {fileDup && !fileOverride && (
           <div className="bg-red-50 border-2 border-red-400 rounded-xl overflow-hidden">
             <div className="flex items-start gap-3 px-4 py-3">
@@ -681,7 +877,6 @@ export default function TemplateUpload({ onUploaded }: Props) {
           </div>
         )}
 
-        {/* Name duplicate warning */}
         {liveNameDup && !nameOverride && !fileDup && templateName.trim() && (
           <div className="bg-amber-50 border-2 border-amber-400 rounded-xl overflow-hidden">
             <div className="flex items-start gap-3 px-4 py-3">
@@ -719,9 +914,10 @@ export default function TemplateUpload({ onUploaded }: Props) {
           </div>
         )}
 
-        {/* Category */}
         <div>
-          <label className="text-xs font-bold text-gray-600 block mb-1.5 uppercase tracking-wide">Category</label>
+          <label className="text-xs font-bold text-gray-600 block mb-1.5 uppercase tracking-wide">
+            Category
+          </label>
           <div className="relative">
             <select
               value={category}
@@ -734,13 +930,20 @@ export default function TemplateUpload({ onUploaded }: Props) {
               <option value="ecommerce">E-Commerce</option>
               <option value="startup">Startup</option>
             </select>
-            <svg className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9ca3af" strokeWidth="2.5">
+            <svg
+              className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#9ca3af"
+              strokeWidth="2.5"
+            >
               <polyline points="6 9 12 15 18 9" />
             </svg>
           </div>
         </div>
 
-        {/* Drop Zone */}
         <div
           onDragOver={(e) => {
             e.preventDefault();
@@ -764,7 +967,14 @@ export default function TemplateUpload({ onUploaded }: Props) {
                     : "border-gray-200 bg-gray-50 hover:border-indigo-300 hover:bg-indigo-50/30"
             }`}
         >
-          <input ref={fileInputRef} type="file" accept=".zip" className="hidden" onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])} />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".zip"
+            className="hidden"
+            onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
+          />
+
           {isValidating ? (
             <>
               <Loader2 size={36} className="text-indigo-400 animate-spin" />
@@ -772,7 +982,11 @@ export default function TemplateUpload({ onUploaded }: Props) {
             </>
           ) : selectedFile ? (
             <>
-              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${validation?.passed ? "bg-green-100" : validation ? "bg-red-100" : "bg-indigo-100"}`}>
+              <div
+                className={`w-14 h-14 rounded-2xl flex items-center justify-center ${
+                  validation?.passed ? "bg-green-100" : validation ? "bg-red-100" : "bg-indigo-100"
+                }`}
+              >
                 {validation?.passed ? (
                   <CheckCircle size={28} className="text-green-500" />
                 ) : validation ? (
@@ -781,6 +995,7 @@ export default function TemplateUpload({ onUploaded }: Props) {
                   <FileArchive size={28} className="text-indigo-500" />
                 )}
               </div>
+
               <div className="text-center">
                 <p className="text-sm font-bold text-gray-700">{selectedFile.name}</p>
                 <p className="text-xs text-gray-400 mt-0.5">
@@ -794,14 +1009,16 @@ export default function TemplateUpload({ onUploaded }: Props) {
                     </span>
                   )}
                 </p>
+
                 {detectedImages > 0 && (
                   <div className="flex items-center justify-center gap-1 mt-1.5">
                     <span className="inline-flex items-center gap-1 text-xs bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full font-semibold">
-                      <Image size={10} /> {detectedImages} image(s) → base64
+                      <Image size={10} /> {detectedImages} image(s) → Supabase
                     </span>
                   </div>
                 )}
               </div>
+
               <p className="text-xs text-gray-400">Click to change file</p>
             </>
           ) : (
@@ -817,7 +1034,6 @@ export default function TemplateUpload({ onUploaded }: Props) {
           )}
         </div>
 
-        {/* Validation Results */}
         {(isValidating || validation) && (
           <div className="rounded-xl border border-gray-200 overflow-hidden">
             <div
@@ -826,16 +1042,32 @@ export default function TemplateUpload({ onUploaded }: Props) {
             >
               <div className="flex items-center gap-2">
                 <Info size={13} className="text-gray-400" />
-                <span className="text-xs font-bold text-gray-600 uppercase tracking-wide">Validation Report</span>
+                <span className="text-xs font-bold text-gray-600 uppercase tracking-wide">
+                  Validation Report
+                </span>
               </div>
+
               {validation && (
                 <div className="flex items-center gap-2">
-                  {validation.errors > 0 && <span className="text-xs bg-red-100 text-red-600 font-bold px-2 py-0.5 rounded-full">{validation.errors} error(s)</span>}
-                  {validation.warnings > 0 && <span className="text-xs bg-amber-100 text-amber-600 font-bold px-2 py-0.5 rounded-full">{validation.warnings} warning(s)</span>}
-                  {validation.passed && validation.errors === 0 && <span className="text-xs bg-green-100 text-green-600 font-bold px-2 py-0.5 rounded-full">✓ Ready</span>}
+                  {validation.errors > 0 && (
+                    <span className="text-xs bg-red-100 text-red-600 font-bold px-2 py-0.5 rounded-full">
+                      {validation.errors} error(s)
+                    </span>
+                  )}
+                  {validation.warnings > 0 && (
+                    <span className="text-xs bg-amber-100 text-amber-600 font-bold px-2 py-0.5 rounded-full">
+                      {validation.warnings} warning(s)
+                    </span>
+                  )}
+                  {validation.passed && validation.errors === 0 && (
+                    <span className="text-xs bg-green-100 text-green-600 font-bold px-2 py-0.5 rounded-full">
+                      ✓ Ready
+                    </span>
+                  )}
                 </div>
               )}
             </div>
+
             <div className="p-3 space-y-1.5 bg-white">
               {isValidating ? (
                 <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
@@ -846,6 +1078,7 @@ export default function TemplateUpload({ onUploaded }: Props) {
                   {visibleChecks.map((c, i) => (
                     <CheckRow key={i} check={c} />
                   ))}
+
                   {sortedChecks.length > 5 && (
                     <button
                       onClick={() => setShowAllChecks(!showAllChecks)}
@@ -868,7 +1101,6 @@ export default function TemplateUpload({ onUploaded }: Props) {
           </div>
         )}
 
-        {/* Progress */}
         {isUploading && (
           <div className="space-y-1.5">
             <div className="flex justify-between text-xs">
@@ -876,7 +1108,10 @@ export default function TemplateUpload({ onUploaded }: Props) {
               <span className="text-indigo-600 font-bold">{uploadState.progress}%</span>
             </div>
             <div className="w-full h-2 rounded-full bg-gray-100 overflow-hidden">
-              <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all duration-500" style={{ width: `${uploadState.progress}%` }} />
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all duration-500"
+                style={{ width: `${uploadState.progress}%` }}
+              />
             </div>
           </div>
         )}
@@ -890,6 +1125,7 @@ export default function TemplateUpload({ onUploaded }: Props) {
             </div>
           </div>
         )}
+
         {uploadState.status === "error" && (
           <div className="flex items-start gap-3 p-4 rounded-xl bg-red-50 border border-red-200">
             <AlertCircle size={18} className="text-red-400 mt-0.5 shrink-0" />
@@ -900,13 +1136,16 @@ export default function TemplateUpload({ onUploaded }: Props) {
           </div>
         )}
 
-        {/* Buttons */}
         <div className="flex gap-3">
           <button
             onClick={handleUpload}
             disabled={!canUpload}
             className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold text-white shadow-sm transition-all duration-150
-              ${!canUpload ? "bg-gray-300 cursor-not-allowed" : "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 cursor-pointer"}`}
+              ${
+                !canUpload
+                  ? "bg-gray-300 cursor-not-allowed"
+                  : "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 cursor-pointer"
+              }`}
           >
             {isUploading ? (
               <>
@@ -926,20 +1165,32 @@ export default function TemplateUpload({ onUploaded }: Props) {
               </>
             )}
           </button>
-          <button onClick={handleReset} className="px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors">
+
+          <button
+            onClick={handleReset}
+            className="px-4 py-2.5 rounded-xl text-sm font-semibold border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
+          >
             Reset
           </button>
         </div>
 
-        {/* Guide */}
         <div className="rounded-xl border border-amber-100 bg-amber-50 overflow-hidden">
           <div className="px-3 py-2 border-b border-amber-100 flex items-center gap-2">
             <AlertTriangle size={13} className="text-amber-500" />
-            <p className="text-xs font-bold text-amber-700">Required ZIP structure</p>
+            <p className="text-xs font-bold text-amber-700">Recommended ZIP structure</p>
           </div>
           <div className="px-3 py-2.5">
-            <pre className="text-xs text-amber-700 font-mono leading-relaxed">{`template.zip\n├── index.html\n├── public/\n│   ├── style.css\n│   └── main.js\n└── images/\n    ├── hero.png\n    └── logo.svg`}</pre>
-            <p className="text-xs text-amber-600 mt-2">💡 Compiled Tailwind CSS is auto-stripped — only custom rules & base64 images are saved.</p>
+            <pre className="text-xs text-amber-700 font-mono leading-relaxed">{`template.zip
+├── index.html
+├── images/             (optional)
+│   ├── hero.png
+│   └── logo.svg
+└── public/             (optional)
+    ├── style.css
+    └── main.js`}</pre>
+            <p className="text-xs text-amber-600 mt-2">
+              💡 Images are uploaded to Supabase and URLs are auto-replaced in HTML/CSS.
+            </p>
           </div>
         </div>
       </div>

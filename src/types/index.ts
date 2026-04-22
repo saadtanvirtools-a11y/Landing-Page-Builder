@@ -8,29 +8,41 @@ export interface User {
   assignedTemplateId: string | null;
   assignedTemplateName: string | null;
 }
+
 export interface LoginPayload {
   email: string;
   password: string;
 }
+
 export interface SignupPayload {
   name: string;
   email: string;
   password: string;
 }
+
 export interface AuthResponse {
   user: User;
   token: string;
 }
+
 export interface ApiResponse<T> {
   success: boolean;
   data: T;
   message?: string;
 }
+
 export interface PageScripts {
   gtmId: string;
   headScripts: string;
   bodyScripts: string;
+
+  // SEO / page settings
+  pageTitle: string;
+  faviconUrl: string;
+  metaDescription: string;
+  googleAnalyticsId: string;
 }
+
 export interface BlockVariant {
   blockType: string;
   variantId: number;
@@ -39,6 +51,7 @@ export interface BlockVariant {
   defaultContent: Record<string, any>;
   defaultStyles: Record<string, any>;
 }
+
 export interface BlockInstance {
   instanceId: string;
   blockType: string;
@@ -47,19 +60,23 @@ export interface BlockInstance {
   content: Record<string, any>;
   styles: Record<string, any>;
 }
+
 export interface BlockProps {
   block: BlockInstance;
   isSelected: boolean;
   onSelect: () => void;
 }
+
 export interface EditorState {
   canvasBlocks: BlockInstance[];
   pageScripts: PageScripts;
   lastSaved: string | null;
 }
+
 export interface CSSVariables {
   [varName: string]: string;
 }
+
 export interface EditableItem {
   id: string;
   type: "text" | "image" | "link";
@@ -70,6 +87,7 @@ export interface EditableItem {
   styleId: string;
   styleChildSelector?: string;
 }
+
 export interface ParsedBlock {
   blockId: string;
   blockName: string;
@@ -82,6 +100,7 @@ export interface ParsedBlock {
   sourceTemplateName: string;
   styles?: Record<string, string>;
 }
+
 export interface Template {
   id: string;
   templateName: string;
@@ -95,10 +114,12 @@ export interface Template {
   rawCss?: string;
   rawJs?: string;
 }
+
 export interface Assignment {
   userId: string;
   templateId: string;
 }
+
 export interface UserEditorSave {
   userId: string;
   templateId: string;
@@ -106,6 +127,19 @@ export interface UserEditorSave {
   editables: Record<string, string>;
   editedHtml: string;
   savedAt: string;
+}
+
+// ── User Project (saved edited version per user/template) ───────────────
+export interface UserProject {
+  id: string;
+  userId: string;
+  templateId: string;
+  templateName: string;
+  currentTemplate: Template;
+  canvasBlocks: BlockInstance[];
+  pageScripts: PageScripts;
+  savedAtIso?: string;
+  updatedAt?: any;
 }
 
 // ── Block Tier ────────────────────────────────────────
@@ -120,7 +154,7 @@ export interface StandaloneBlock {
   blockName: string;
   blockType: string;
   tier: BlockTier;
-  // ✅ NEW: When tier === "custom" → only these user IDs can access
+  // ✅ When tier === "custom" → only these user IDs can access
   // When tier === "free"    → everyone (array ignored)
   // When tier === "premium" → nobody   (array ignored)
   allowedUserIds: string[];

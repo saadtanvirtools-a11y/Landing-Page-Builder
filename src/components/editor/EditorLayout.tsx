@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import JSZip from "jszip";
 import { useAuthStore } from "../../store/authStore";
 import { useEditorStore } from "../../store/editorStore";
 import BlockPanel from "../../components/editor/BlockPanel";
@@ -8,17 +9,190 @@ import PropertiesPanel from "../../components/editor/PropertiesPanel";
 import { db } from "../../firebase";
 import { collection, getDocs, doc, getDoc } from "firebase/firestore";
 import {
-  DndContext, DragOverlay, PointerSensor,
-  useSensor, useSensors,
-  type DragStartEvent, type DragEndEvent, type DragOverEvent,
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragStartEvent,
+  type DragEndEvent,
+  type DragOverEvent,
 } from "@dnd-kit/core";
 import { restrictToWindowEdges } from "@dnd-kit/modifiers";
 import type { BlockOption } from "../../components/editor/BlockPanel";
 import {
-  isPanelDrag, parseDragId,
-  isStandaloneDrag, parseStandaloneDragId,
+  isPanelDrag,
+  parseDragId,
+  isStandaloneDrag,
+  parseStandaloneDragId,
 } from "../../components/editor/BlockPanel";
-import type { Template, StandaloneBlock } from "../../types";
+import type { Template, StandaloneBlock, EditableItem } from "../../types";
+import { uploadEditorImage } from "../../api/supabaseStorage";
+
+// ─────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────
+async function dataUrlToFile(dataUrl: string, fileName: string): Promise<File> {
+  const res = await fetch(dataUrl);
+  const blob = await res.blob();
+  return new File([blob], fileName, { type: blob.type || "image/png" });
+}
+
+function isDataUrl(value: string): boolean {
+  return typeof value === "string" && value.startsWith("data:image/");
+}
+
+function guessFileExtensionFromDataUrl(dataUrl: string): string {
+  const match = dataUrl.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,/);
+  if (!match) return "png";
+
+  const ext = match[1].toLowerCase();
+  if (ext === "jpeg") return "jpg";
+  if (ext === "svg+xml") return "svg";
+  return ext;
+}
+
+function sanitizeFileName(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-./]+|[-./]+$/g, "");
+}
+
+function getFileBaseNameFromUrl(url: string): string {
+  try {
+    const pathname = new URL(url, window.location.origin).pathname;
+    const raw = pathname.split("/").pop() || "asset";
+    const withoutQuery = raw.split("?")[0].split("#")[0];
+    const lastDot = withoutQuery.lastIndexOf(".");
+    if (lastDot > 0) {
+      return sanitizeFileName(withoutQuery.slice(0, lastDot)) || "asset";
+    }
+    return sanitizeFileName(withoutQuery) || "asset";
+  } catch {
+    const clean = url.split("/").pop()?.split("?")[0]?.split("#")[0] || "asset";
+    const lastDot = clean.lastIndexOf(".");
+    if (lastDot > 0) {
+      return sanitizeFileName(clean.slice(0, lastDot)) || "asset";
+    }
+    return sanitizeFileName(clean) || "asset";
+  }
+}
+
+function getExtensionFromUrlOrType(url: string, contentType?: string): string {
+  const type = (contentType || "").toLowerCase();
+
+  if (type.includes("svg")) return "svg";
+  if (type.includes("png")) return "png";
+  if (type.includes("jpeg")) return "jpg";
+  if (type.includes("jpg")) return "jpg";
+  if (type.includes("webp")) return "webp";
+  if (type.includes("gif")) return "gif";
+  if (type.includes("x-icon") || type.includes("ico")) return "ico";
+
+  try {
+    const pathname = new URL(url, window.location.origin).pathname;
+    const file = pathname.split("/").pop() || "";
+    const ext = file.split(".").pop()?.toLowerCase();
+    if (ext) return ext === "jpeg" ? "jpg" : ext;
+  } catch {
+    const file = url.split("/").pop() || "";
+    const ext = file.split(".").pop()?.toLowerCase();
+    if (ext) return ext === "jpeg" ? "jpg" : ext;
+  }
+
+  return "png";
+}
+
+function isExportableAssetUrl(url: string): boolean {
+  if (!url) return false;
+
+  const lower = url.trim().toLowerCase();
+  if (!lower) return false;
+  if (lower.startsWith("javascript:")) return false;
+  if (lower.startsWith("mailto:")) return false;
+  if (lower.startsWith("tel:")) return false;
+
+  return true;
+}
+
+async function blobFromAnyUrl(url: string): Promise<Blob> {
+  if (url.startsWith("data:")) {
+    const res = await fetch(url);
+    return await res.blob();
+  }
+
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch asset: ${res.status} ${res.statusText}`);
+  }
+  return await res.blob();
+}
+
+function extractUrlsFromCss(css: string): string[] {
+  const results: string[] = [];
+  const regex = /url\((['"]?)(.*?)\1\)/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(css)) !== null) {
+    const url = (match[2] || "").trim();
+    if (!url) continue;
+    if (url.startsWith("data:")) continue;
+    if (url.startsWith("#")) continue;
+    results.push(url);
+  }
+
+  return results;
+}
+
+function replaceUrlsInCss(css: string, assetMap: Record<string, string>): string {
+  let updated = css;
+
+  Object.entries(assetMap).forEach(([oldUrl, newUrl]) => {
+    const escaped = oldUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    updated = updated.replace(
+      new RegExp(`url\\((['"]?)${escaped}\\1\\)`, "g"),
+      `url("${newUrl}")`
+    );
+  });
+
+  return updated;
+}
+
+async function localizeAsset(
+  url: string,
+  zip: JSZip,
+  seen: Map<string, string>,
+  usedNames: Set<string>
+): Promise<string> {
+  if (!isExportableAssetUrl(url)) return url;
+
+  if (seen.has(url)) {
+    return seen.get(url)!;
+  }
+
+  const blob = await blobFromAnyUrl(url);
+  const ext = getExtensionFromUrlOrType(url, blob.type);
+  const base = getFileBaseNameFromUrl(url);
+  let fileName = `${base}.${ext}`;
+  let counter = 1;
+
+  while (usedNames.has(fileName)) {
+    fileName = `${base}-${counter}.${ext}`;
+    counter += 1;
+  }
+
+  usedNames.add(fileName);
+
+  const localPath = `images/${fileName}`;
+  zip.file(localPath, blob);
+  seen.set(url, localPath);
+
+  return localPath;
+}
 
 // ─────────────────────────────────────────────────────────────
 // Drag overlay card
@@ -39,6 +213,7 @@ function DragOverlayCard({
       </div>
     );
   }
+
   if (standaloneBlock) {
     return (
       <div className="w-48 rounded-xl border-2 border-green-500 bg-white shadow-2xl px-3 py-2.5 rotate-1 opacity-95 pointer-events-none">
@@ -48,6 +223,7 @@ function DragOverlayCard({
       </div>
     );
   }
+
   return null;
 }
 
@@ -56,30 +232,30 @@ function DragOverlayCard({
 // ─────────────────────────────────────────────────────────────
 function standaloneToParseBlock(block: StandaloneBlock) {
   return {
-    blockId           : block.blockType,
-    blockName         : block.blockName,
-    blockOrder        : 0,
-    rawHtml           : block.rawHtml,
-    editables         : block.editables ?? [],
-    colorVars         : {},
-    cssVariables      : block.cssVariables ?? {},
-    sourceTemplateId  : `standalone::${block.id}`,
+    blockId: block.blockType,
+    blockName: block.blockName,
+    blockOrder: 0,
+    rawHtml: block.rawHtml,
+    editables: block.editables ?? [],
+    colorVars: {},
+    cssVariables: block.cssVariables ?? {},
+    sourceTemplateId: `standalone::${block.id}`,
     sourceTemplateName: "Standalone",
   };
 }
 
 const BLOCK_LABELS: Record<string, string> = {
-  hero          : "Hero",
-  features      : "Features",
-  footer        : "Footer",
-  navbar        : "Navbar",
-  pricing       : "Pricing",
-  faq           : "FAQ",
-  testimonials  : "Testimonials",
-  cta           : "CTA",
-  "cta-banner"  : "CTA Banner",
-  benefits      : "Benefits",
-  contact       : "Contact",
+  hero: "Hero",
+  features: "Features",
+  footer: "Footer",
+  navbar: "Navbar",
+  pricing: "Pricing",
+  faq: "FAQ",
+  testimonials: "Testimonials",
+  cta: "CTA",
+  "cta-banner": "CTA Banner",
+  benefits: "Benefits",
+  contact: "Contact",
   "how-it-works": "How It Works",
 };
 
@@ -88,29 +264,32 @@ const BLOCK_LABELS: Record<string, string> = {
 // ─────────────────────────────────────────────────────────────
 function buildGroupedBlocksFromTemplates(
   templates: Template[],
-  assignedTemplateId: string | null,
+  assignedTemplateId: string | null
 ): Record<string, BlockOption[]> {
   const filtered = assignedTemplateId
     ? templates.filter((t) => t.id === assignedTemplateId)
     : templates;
 
   const groups: Record<string, BlockOption[]> = {};
-  const countPerType: Record<string, number>  = {};
+  const countPerType: Record<string, number> = {};
 
   filtered.forEach((template) => {
     template.blocks.forEach((block) => {
       if (!groups[block.blockId]) groups[block.blockId] = [];
       countPerType[block.blockId] = (countPerType[block.blockId] || 0) + 1;
+
       const label = BLOCK_LABELS[block.blockId] ?? block.blockId;
+
       groups[block.blockId].push({
         block,
-        sourceTemplateId  : template.id,
+        sourceTemplateId: template.id,
         sourceTemplateName: template.templateName,
-        templateRawHtml   : template.rawHtml,
-        variantLabel      : `${label} ${countPerType[block.blockId]}`,
+        templateRawHtml: template.rawHtml,
+        variantLabel: `${label} ${countPerType[block.blockId]}`,
       });
     });
   });
+
   return groups;
 }
 
@@ -124,19 +303,30 @@ export default function EditorLayout() {
   const assignedTemplateId = user?.assignedTemplateId ?? null;
 
   const {
-    lastSaved, isSaving, templateName,
-    currentTemplate, selectedBlockId,
-    saveToStorage, loadFromStorage, loadTemplate,
-    resetEditor, addBlockToTemplate,
-    updateEditable, updateCssVar, updateClassSwap, updateBlockStyle,
+    lastSaved,
+    isSaving,
+    templateName,
+    currentTemplate,
+    selectedBlockId,
+    pageScripts,
+    saveToStorage,
+    loadFromStorage,
+    loadTemplate,
+    resetEditor,
+    addBlockToTemplate,
+    updateEditable,
+    updateCssVar,
+    updateClassSwap,
+    updateBlockStyle,
+    updatePageSettings,
   } = useEditorStore();
 
-  const [draggingOption,     setDraggingOption]     = useState<BlockOption | null>(null);
+  const [draggingOption, setDraggingOption] = useState<BlockOption | null>(null);
   const [draggingStandalone, setDraggingStandalone] = useState<StandaloneBlock | null>(null);
-  const [exported,           setExported]           = useState(false);
+  const [exported, setExported] = useState(false);
+  const [isUploadingEditorImage, setIsUploadingEditorImage] = useState(false);
 
-  // ✅ Firestore data cached in state for drag operations
-  const [firestoreTemplates,       setFirestoreTemplates]       = useState<Template[]>([]);
+  const [firestoreTemplates, setFirestoreTemplates] = useState<Template[]>([]);
   const [firestoreStandaloneBlocks, setFirestoreStandaloneBlocks] = useState<StandaloneBlock[]>([]);
 
   const activeDropZoneRef = useRef<string | null>(null);
@@ -148,18 +338,19 @@ export default function EditorLayout() {
   }, []);
 
   const lastPointerPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
   useEffect(() => {
-    const onMove = (e: PointerEvent) => { lastPointerPos.current = { x: e.clientX, y: e.clientY }; };
+    const onMove = (e: PointerEvent) => {
+      lastPointerPos.current = { x: e.clientX, y: e.clientY };
+    };
     window.addEventListener("pointermove", onMove);
     return () => window.removeEventListener("pointermove", onMove);
   }, []);
 
-  // ✅ Load editor save from localStorage on mount
   useEffect(() => {
     if (user?.id) loadFromStorage(user.id);
-  }, [user?.id]);
+  }, [user?.id, loadFromStorage]);
 
-  // ✅ Load templates + standalone blocks from Firestore (for drag operations)
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -167,16 +358,19 @@ export default function EditorLayout() {
           getDocs(collection(db, "templates")),
           getDocs(collection(db, "blocks")),
         ]);
+
         setFirestoreTemplates(tplSnap.docs.map((d) => d.data() as Template));
         setFirestoreStandaloneBlocks(blkSnap.docs.map((d) => d.data() as StandaloneBlock));
       } catch (err) {
         console.error("[EditorLayout] Failed to load Firestore data:", err);
       }
     };
+
     fetchData();
   }, []);
 
-  // ✅ Ensure currentTemplate matches assignedTemplateId — fetch from Firestore
+  
+
   useEffect(() => {
     if (!assignedTemplateId) return;
     if (currentTemplate?.id === assignedTemplateId) return;
@@ -199,21 +393,20 @@ export default function EditorLayout() {
       (currentTemplate?.blocks ?? []).map((b) =>
         b.sourceTemplateId?.startsWith("standalone::")
           ? b.sourceTemplateId
-          : b.blockId + "::" + b.sourceTemplateId,
+          : b.blockId + "::" + b.sourceTemplateId
       ),
-    [currentTemplate?.blocks],
+    [currentTemplate?.blocks]
   );
 
-  // ── Drag Start ───────────────────────────────────────────
   const handleDragStart = useCallback(
     (e: DragStartEvent) => {
       const id = String(e.active.id);
 
       if (isPanelDrag(id)) {
-        // ✅ Use Firestore templates (cached in state)
         const groups = buildGroupedBlocksFromTemplates(firestoreTemplates, assignedTemplateId);
         const { blockId, sourceTemplateId } = parseDragId(id);
         const found = (groups[blockId] || []).find((o) => o.sourceTemplateId === sourceTemplateId);
+
         setDraggingOption(found ?? null);
         setDraggingStandalone(null);
         updateDropZone(null);
@@ -221,33 +414,31 @@ export default function EditorLayout() {
       }
 
       if (isStandaloneDrag(id)) {
-        // ✅ Use Firestore standalone blocks (cached in state)
         const { standaloneId } = parseStandaloneDragId(id);
         const found = firestoreStandaloneBlocks.find((b) => b.id === standaloneId);
+
         setDraggingStandalone(found ?? null);
         setDraggingOption(null);
         updateDropZone(null);
       }
     },
-    [updateDropZone, assignedTemplateId, firestoreTemplates, firestoreStandaloneBlocks],
+    [updateDropZone, assignedTemplateId, firestoreTemplates, firestoreStandaloneBlocks]
   );
 
-  // ── Drag Over ────────────────────────────────────────────
   const handleDragOver = useCallback(
     (e: DragOverEvent) => {
       const overId = e.over?.id ? String(e.over.id) : null;
       if (overId !== activeDropZoneRef.current) updateDropZone(overId);
     },
-    [updateDropZone],
+    [updateDropZone]
   );
 
-  // ── Drag End ─────────────────────────────────────────────
   const handleDragEnd = useCallback(
     (e: DragEndEvent) => {
-      const activeId      = String(e.active.id);
+      const activeId = String(e.active.id);
       const lastKnownZone = activeDropZoneRef.current;
-      const dndKitOverId  = e.over?.id ? String(e.over.id) : null;
-      const overId        = dndKitOverId ?? lastKnownZone;
+      const dndKitOverId = e.over?.id ? String(e.over.id) : null;
+      const overId = dndKitOverId ?? lastKnownZone;
 
       setDraggingOption(null);
       setDraggingStandalone(null);
@@ -265,148 +456,477 @@ export default function EditorLayout() {
       };
 
       if (isPanelDrag(activeId)) {
-        // ✅ Use Firestore templates (cached in state)
         const { blockId, sourceTemplateId } = parseDragId(activeId);
         const groups = buildGroupedBlocksFromTemplates(firestoreTemplates, assignedTemplateId);
         const option = (groups[blockId] || []).find((o) => o.sourceTemplateId === sourceTemplateId);
+
         if (!option) {
           console.error("[DragEnd] ❌ Template block not found:", blockId);
           return;
         }
+
         doAdd({
           ...option.block,
-          sourceTemplateId  : option.sourceTemplateId,
+          sourceTemplateId: option.sourceTemplateId,
           sourceTemplateName: option.sourceTemplateName,
         });
+
         return;
       }
 
       if (isStandaloneDrag(activeId)) {
-        // ✅ Use Firestore standalone blocks (cached in state)
         const { standaloneId } = parseStandaloneDragId(activeId);
         const found = firestoreStandaloneBlocks.find((b) => b.id === standaloneId);
+
         if (!found) {
           console.error("[DragEnd] ❌ Standalone block not found:", standaloneId);
           return;
         }
+
         doAdd(standaloneToParseBlock(found));
       }
     },
-    [addBlockToTemplate, updateDropZone, assignedTemplateId, firestoreTemplates, firestoreStandaloneBlocks],
+    [addBlockToTemplate, updateDropZone, assignedTemplateId, firestoreTemplates, firestoreStandaloneBlocks]
   );
 
-  // ── Auto-save every 30s ──────────────────────────────────
   useEffect(() => {
     if (!user) return;
     const t = setInterval(() => saveToStorage(user.id), 30_000);
     return () => clearInterval(t);
-  }, [user]);
+  }, [user, saveToStorage]);
 
-  const handleSave    = () => { if (user) saveToStorage(user.id); };
-  const handleReset   = () => { if (confirm("Reset canvas? All unsaved changes will be lost.")) resetEditor(); };
-  const handleLogout  = () => { logout(); navigate("/login"); };
+  const handleSave = () => {
+    if (user) saveToStorage(user.id);
+  };
+
+  const handleReset = () => {
+    if (confirm("Reset canvas? All unsaved changes will be lost.")) resetEditor();
+  };
+
+  const handleBackToDashboard = () => {
+    const shouldLeave = confirm("Go back to dashboard? Make sure your changes are saved.");
+    if (!shouldLeave) return;
+    navigate("/dashboard");
+  };
+
+  const handleLogout = () => {
+    logout();
+    navigate("/login");
+  };
 
   const handlePreview = () => {
     if (!currentTemplate?.blocks?.length) return;
+
     if (user?.id && currentTemplate) {
       const latestState = useEditorStore.getState();
-      const tpl         = latestState.currentTemplate;
-      const snapshot    = {
-        currentTemplate: tpl ? { ...tpl, blocks: tpl.blocks.map((b) => ({ ...b, styles: b.styles ?? {} })) } : null,
-        canvasBlocks   : latestState.canvasBlocks,
-        pageScripts    : latestState.pageScripts,
-        savedAt        : new Date().toISOString(),
+      const tpl = latestState.currentTemplate;
+
+      const snapshot = {
+        currentTemplate: tpl
+          ? { ...tpl, blocks: tpl.blocks.map((b) => ({ ...b, styles: b.styles ?? {} })) }
+          : null,
+        canvasBlocks: latestState.canvasBlocks,
+        pageScripts: latestState.pageScripts,
+        savedAt: new Date().toISOString(),
       };
+
       localStorage.setItem(`editor_save_${user.id}`, JSON.stringify(snapshot));
     }
+
     navigate("/preview", { state: { templateId: currentTemplate?.id ?? null } });
   };
 
-  const buildExportHtml = (template: Template): string => {
+  const buildExportZip = async (template: Template): Promise<Blob> => {
     const EDITOR_ATTRS = [
-      "data-editable", "data-editable-type", "data-style-id", "data-style-layer",
-      "data-style-props", "data-color-vars", "data-block", "data-block-name",
-      "data-block-order", "data-block-removable", "data-block-item",
+      "data-editable",
+      "data-editable-type",
+      "data-style-id",
+      "data-style-layer",
+      "data-style-props",
+      "data-color-vars",
+      "data-block",
+      "data-block-name",
+      "data-block-order",
+      "data-block-removable",
+      "data-block-item",
     ];
+
+    const zip = new JSZip();
     const parser = new DOMParser();
-    const doc2   = parser.parseFromString(template.rawHtml, "text/html");
+    const doc2 = parser.parseFromString(template.rawHtml, "text/html");
+    const assetMap = new Map<string, string>();
+    const usedNames = new Set<string>();
+
     EDITOR_ATTRS.forEach((attr) => {
       doc2.querySelectorAll(`[${attr}]`).forEach((el) => el.removeAttribute(attr));
     });
+
     doc2.querySelectorAll("[data-tpl-styles]").forEach((el) => {
       const parent = el.parentElement;
-      if (parent) { Array.from(el.children).forEach((child) => parent.insertBefore(child, el)); el.remove(); }
+      if (parent) {
+        Array.from(el.children).forEach((child) => parent.insertBefore(child, el));
+        el.remove();
+      }
     });
+
     const head = doc2.head || doc2.createElement("head");
-    if (!doc2.head) { const htmlEl = doc2.documentElement || doc2.createElement("html"); htmlEl.prepend(head); if (!doc2.documentElement) doc2.appendChild(htmlEl); }
+    if (!doc2.head) {
+      const htmlEl = doc2.documentElement || doc2.createElement("html");
+      htmlEl.prepend(head);
+      if (!doc2.documentElement) doc2.appendChild(htmlEl);
+    }
+
     let titleEl = head.querySelector("title");
-    if (!titleEl) { titleEl = doc2.createElement("title"); head.prepend(titleEl); }
-    if (!titleEl.textContent?.trim()) titleEl.textContent = template.templateName || "Exported Page";
+    if (!titleEl) {
+      titleEl = doc2.createElement("title");
+      head.prepend(titleEl);
+    }
+    titleEl.textContent = pageScripts.pageTitle?.trim() || template.templateName || "Exported Page";
+
+    const existingMetaDescription = head.querySelector('meta[name="description"]');
+    if (existingMetaDescription) existingMetaDescription.remove();
+    if (pageScripts.metaDescription?.trim()) {
+      const metaDescription = doc2.createElement("meta");
+      metaDescription.setAttribute("name", "description");
+      metaDescription.setAttribute("content", pageScripts.metaDescription.trim());
+      head.appendChild(metaDescription);
+    }
+
+// ✅ ALWAYS ensure favicon exists
+const existingFavicon = head.querySelectorAll('link[rel="icon"]');
+existingFavicon.forEach(el => el.remove());
+
+let faviconPath = "";
+
+// 1️⃣ If user provided favicon → use it
+if (pageScripts.faviconUrl?.trim()) {
+  try {
+    faviconPath = await localizeAsset(
+      pageScripts.faviconUrl.trim(),
+      zip,
+      assetMap,
+      usedNames
+    );
+  } catch (err) {
+    console.error("[Export] Failed to localize favicon:", err);
+    faviconPath = pageScripts.faviconUrl.trim();
+  }
+}
+
+// 2️⃣ If NO favicon → use default
+if (!faviconPath) {
+  // create simple default favicon (small blank png)
+  const defaultFaviconBlob = new Blob(
+    [
+      new Uint8Array([
+        137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,
+        0,0,0,16,0,0,0,16,8,6,0,0,0,31,243,255,97,
+        0,0,0,12,73,68,65,84,120,156,99,248,15,4,0,9,
+        251,3,253,160,149,196,164,0,0,0,0,73,69,78,68,
+        174,66,96,130
+      ])
+    ],
+    { type: "image/png" }
+  );
+
+  const defaultPath = "images/favicon.png";
+  zip.file(defaultPath, defaultFaviconBlob);
+  faviconPath = defaultPath;
+}
+
+// 3️⃣ Add favicon to head
+const favicon = doc2.createElement("link");
+favicon.setAttribute("rel", "icon");
+favicon.setAttribute("type", "image/png");
+favicon.setAttribute("href", faviconPath);
+head.appendChild(favicon);
+
     if (!head.querySelector('meta[name="viewport"]')) {
       const viewport = doc2.createElement("meta");
       viewport.setAttribute("name", "viewport");
       viewport.setAttribute("content", "width=device-width, initial-scale=1.0");
       head.appendChild(viewport);
     }
+
     if (!head.querySelector('script[src*="cdn.tailwindcss.com"]')) {
       const tailwindScript = doc2.createElement("script");
       tailwindScript.setAttribute("src", "https://cdn.tailwindcss.com");
       head.appendChild(tailwindScript);
     }
-    const cssVarLines = Object.entries(template.cssVariables || {}).map(([k, v]) => `  ${k}: ${v};`).join("\n");
-    let cssVarStyle = head.querySelector("style#lp-css-vars");
-    if (!cssVarStyle) { cssVarStyle = doc2.createElement("style"); cssVarStyle.id = "lp-css-vars"; head.appendChild(cssVarStyle); }
-    cssVarStyle.textContent = `:root {\n${cssVarLines}\n}`;
-    if (!doc2.body) { const htmlEl = doc2.documentElement; const body = doc2.createElement("body"); while (htmlEl.firstChild) body.appendChild(htmlEl.firstChild); htmlEl.appendChild(body); }
-    return `<!DOCTYPE html>\n${doc2.documentElement.outerHTML}`;
+
+    const imageEls = Array.from(doc2.querySelectorAll("img[src], source[src]"));
+    for (const el of imageEls) {
+      const attr = el.tagName.toLowerCase() === "source" ? "src" : "src";
+      const src = el.getAttribute(attr) || "";
+      if (!isExportableAssetUrl(src)) continue;
+
+      try {
+        const localPath = await localizeAsset(src, zip, assetMap, usedNames);
+        el.setAttribute(attr, localPath);
+      } catch (err) {
+        console.error("[Export] Failed to localize image:", src, err);
+      }
+    }
+
+    const elementsWithStyle = Array.from(doc2.querySelectorAll<HTMLElement>("[style]"));
+    for (const el of elementsWithStyle) {
+      const styleValue = el.getAttribute("style") || "";
+      const urls = extractUrlsFromCss(styleValue);
+
+      if (urls.length === 0) continue;
+
+      const replacements: Record<string, string> = {};
+      for (const url of urls) {
+        try {
+          replacements[url] = await localizeAsset(url, zip, assetMap, usedNames);
+        } catch (err) {
+          console.error("[Export] Failed to localize inline style asset:", url, err);
+        }
+      }
+
+      el.setAttribute("style", replaceUrlsInCss(styleValue, replacements));
+    }
+
+    const styleTags = Array.from(head.querySelectorAll("style"));
+    let combinedCss = "";
+
+    for (const styleEl of styleTags) {
+      let cssText = styleEl.textContent || "";
+      const urls = extractUrlsFromCss(cssText);
+
+      if (urls.length > 0) {
+        const replacements: Record<string, string> = {};
+        for (const url of urls) {
+          try {
+            replacements[url] = await localizeAsset(url, zip, assetMap, usedNames);
+          } catch (err) {
+            console.error("[Export] Failed to localize CSS asset:", url, err);
+          }
+        }
+        cssText = replaceUrlsInCss(cssText, replacements);
+      }
+
+      combinedCss += (combinedCss ? "\n\n" : "") + cssText;
+      styleEl.remove();
+    }
+
+    const cssVarLines = Object.entries(template.cssVariables || {})
+      .map(([k, v]) => `  ${k}: ${v};`)
+      .join("\n");
+
+    if (cssVarLines.trim()) {
+      combinedCss += `${combinedCss ? "\n\n" : ""}:root {\n${cssVarLines}\n}`;
+    }
+
+    let combinedJs = "";
+
+    const inlineScripts = Array.from(doc2.querySelectorAll("script")).filter((script) => {
+      const src = script.getAttribute("src");
+      return !src;
+    });
+
+    for (const script of inlineScripts) {
+      const jsText = script.textContent?.trim() || "";
+      if (jsText) {
+        combinedJs += (combinedJs ? "\n\n" : "") + jsText;
+      }
+      script.remove();
+    }
+
+    if (!doc2.body) {
+      const htmlEl = doc2.documentElement;
+      const body = doc2.createElement("body");
+      while (htmlEl.firstChild) body.appendChild(htmlEl.firstChild);
+      htmlEl.appendChild(body);
+    }
+
+    if (pageScripts.headScripts?.trim()) {
+      head.insertAdjacentHTML("beforeend", pageScripts.headScripts.trim());
+    }
+
+    if (pageScripts.bodyScripts?.trim() && doc2.body) {
+      doc2.body.insertAdjacentHTML("afterbegin", pageScripts.bodyScripts.trim());
+    }
+
+    const oldCssLink = head.querySelector('link[href="public/style.css"]');
+    if (oldCssLink) oldCssLink.remove();
+
+    const exportCssLink = doc2.createElement("link");
+    exportCssLink.setAttribute("rel", "stylesheet");
+    exportCssLink.setAttribute("href", "public/style.css");
+    head.appendChild(exportCssLink);
+
+    const oldMainJs = doc2.querySelector('script[src="public/main.js"]');
+    if (oldMainJs) oldMainJs.remove();
+
+    const exportMainJs = doc2.createElement("script");
+    exportMainJs.setAttribute("src", "public/main.js");
+    if (doc2.body) {
+      doc2.body.appendChild(exportMainJs);
+    } else {
+      head.appendChild(exportMainJs);
+    }
+
+    zip.file("index.html", `<!DOCTYPE html>\n${doc2.documentElement.outerHTML}`);
+    zip.file("public/style.css", combinedCss || "/* Exported styles */\n");
+    zip.file("public/main.js", combinedJs || "// Exported scripts\n");
+
+    return await zip.generateAsync({ type: "blob" });
   };
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (!currentTemplate) return;
-    const html = buildExportHtml(currentTemplate);
-    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    const fileName = (currentTemplate.templateName || "export").toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-    a.href = url; a.download = `${fileName}.html`;
-    document.body.appendChild(a); a.click();
-    document.body.removeChild(a); URL.revokeObjectURL(url);
-    setExported(true); setTimeout(() => setExported(false), 2500);
+
+    try {
+      const zipBlob = await buildExportZip(currentTemplate);
+      const url = URL.createObjectURL(zipBlob);
+      const a = document.createElement("a");
+      const fileName = (currentTemplate.templateName || "export")
+        .toLowerCase()
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9-]/g, "");
+
+      a.href = url;
+      a.download = `${fileName}.zip`;
+
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      setExported(true);
+      setTimeout(() => setExported(false), 2500);
+    } catch (err) {
+      console.error("[Export] ZIP export failed:", err);
+      alert("ZIP export failed. Please try again.");
+    }
   };
 
   const resolveLiveColor = useCallback(
     (varName: string): string => {
       if (!currentTemplate) return "#ffffff";
+
       const fromStore = currentTemplate.cssVariables?.[varName];
       if (fromStore && fromStore.trim() !== "") return fromStore.trim();
+
       if (currentTemplate.rawHtml) {
         const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const match   = currentTemplate.rawHtml.match(new RegExp(escaped + "\\s*:\\s*([^;\\n\\r}]+)"));
+        const match = currentTemplate.rawHtml.match(
+          new RegExp(escaped + "\\s*:\\s*([^;\\n\\r}]+)")
+        );
         if (match?.[1]?.trim()) return match[1].trim();
       }
+
       return "#ffffff";
     },
-    [currentTemplate],
+    [currentTemplate]
   );
 
-  const handleCssVarChange = useCallback((varName: string, value: string) => updateCssVar(varName, value),    [updateCssVar]);
-  const handleClassSwap    = useCallback((editableId: string, newClass: string) => updateClassSwap(editableId, newClass), [updateClassSwap]);
+  const handleCssVarChange = useCallback(
+    (varName: string, value: string) => updateCssVar(varName, value),
+    [updateCssVar]
+  );
 
-  const selectedBlock = currentTemplate?.blocks.find((b) => b.blockId === selectedBlockId) ?? null;
-  const hasBlocks     = (currentTemplate?.blocks?.length ?? 0) > 0;
+  const handleClassSwap = useCallback(
+    (editableId: string, newClass: string) => updateClassSwap(editableId, newClass),
+    [updateClassSwap]
+  );
+
+  const handlePageSettingsChange = useCallback(
+    (data: any) => updatePageSettings(data),
+    [updatePageSettings]
+  );
+
+  const handleEditableChange = useCallback(
+    async (editableId: string, newContent: string) => {
+      if (!currentTemplate) return;
+
+      const allEditables: EditableItem[] = currentTemplate.blocks.flatMap((b) => b.editables || []);
+      const editable = allEditables.find((e) => e.id === editableId);
+
+      if (!editable) {
+        updateEditable(editableId, newContent);
+        return;
+      }
+
+      if (editable.type !== "image" || !isDataUrl(newContent)) {
+        updateEditable(editableId, newContent);
+        return;
+      }
+
+      if (!user?.id) {
+        console.error("[EditorLayout] Cannot upload editor image: missing user id");
+        return;
+      }
+
+      try {
+        setIsUploadingEditorImage(true);
+
+        const ext = guessFileExtensionFromDataUrl(newContent);
+        const file = await dataUrlToFile(newContent, `${editableId}.${ext}`);
+
+        const uploaded = await uploadEditorImage({
+          file,
+          userId: user.id,
+          projectId: currentTemplate.id,
+          editableId,
+        });
+
+        updateEditable(editableId, uploaded.url);
+        console.log("[EditorLayout] ✅ Editor image uploaded:", uploaded.url);
+      } catch (err) {
+        console.error("[EditorLayout] Failed to upload editor image:", err);
+        alert("Image upload failed. Please try again.");
+      } finally {
+        setIsUploadingEditorImage(false);
+      }
+    },
+    [currentTemplate, updateEditable, user?.id]
+  );
+
+  const selectedBlock =
+    currentTemplate?.blocks.find((b) => b.blockId === selectedBlockId) ?? null;
+
+  const hasBlocks = (currentTemplate?.blocks?.length ?? 0) > 0;
 
   return (
-    <DndContext sensors={sensors} onDragStart={handleDragStart} onDragOver={handleDragOver} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
+      onDragEnd={handleDragEnd}
+    >
       <div className="flex flex-col h-screen overflow-hidden bg-gray-50">
-
-        {/* ── NAV ── */}
         <nav className="bg-white border-b border-gray-100 px-4 py-3 flex items-center justify-between flex-shrink-0 z-10 shadow-sm">
           <div className="flex items-center gap-3 min-w-0">
+            <button
+              onClick={handleBackToDashboard}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all group shrink-0"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                className="group-hover:-translate-x-1 transition-transform"
+              >
+                <path d="M19 12H5M12 5l-7 7 7 7" />
+              </svg>
+              <span className="hidden sm:inline">Back to Dashboard</span>
+            </button>
+
+            <div className="w-px h-6 bg-gray-200 shrink-0" />
+
             <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center flex-shrink-0">
               <span className="text-white font-bold text-sm">LP</span>
             </div>
+
             <div className="min-w-0">
-              <h1 className="font-bold text-gray-800 text-sm leading-none truncate max-w-xs">{templateName ?? "Landing Page Builder"}</h1>
+              <h1 className="font-bold text-gray-800 text-sm leading-none truncate max-w-xs">
+                {templateName ?? "Landing Page Builder"}
+              </h1>
               <p className="text-xs text-gray-400 mt-0.5">
                 {currentTemplate
                   ? `${currentTemplate.blocks.length} section${currentTemplate.blocks.length !== 1 ? "s" : ""}`
@@ -416,58 +936,101 @@ export default function EditorLayout() {
           </div>
 
           <div className="text-xs text-gray-400 hidden md:block">
-            {isSaving ? "💾 Saving..." : lastSaved ? `✅ Saved ${new Date(lastSaved).toLocaleTimeString()}` : "⬜ Not saved yet"}
+            {isUploadingEditorImage
+              ? "🖼 Uploading image..."
+              : isSaving
+                ? "💾 Saving..."
+                : lastSaved
+                  ? `✅ Saved ${new Date(lastSaved).toLocaleTimeString()}`
+                  : "⬜ Not saved yet"}
           </div>
 
           <div className="flex items-center gap-2">
-            <button onClick={handleReset} className="px-3 py-1.5 text-xs text-gray-500 hover:text-red-500 transition font-medium">Reset</button>
+            <button
+              onClick={handleReset}
+              className="px-3 py-1.5 text-xs text-gray-500 hover:text-red-500 transition font-medium"
+            >
+              Reset
+            </button>
 
-            <button onClick={handlePreview} disabled={!hasBlocks}
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition disabled:opacity-40 disabled:cursor-not-allowed">
+            <button
+              onClick={handlePreview}
+              disabled={!hasBlocks}
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition disabled:opacity-40 disabled:cursor-not-allowed"
+            >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                <circle cx="12" cy="12" r="3" />
               </svg>
               Preview
             </button>
 
-            <button onClick={handleSave} disabled={isSaving}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition disabled:opacity-50 disabled:cursor-not-allowed">
+            <button
+              onClick={handleSave}
+              disabled={isSaving || isUploadingEditorImage}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                <polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" />
               </svg>
               {isSaving ? "Saving..." : "Save"}
             </button>
 
-            <button onClick={handleExport} disabled={!hasBlocks || !currentTemplate}
+            <button
+              onClick={handleExport}
+              disabled={!hasBlocks || !currentTemplate}
               className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold rounded-lg transition-all duration-200 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed
-                ${exported ? "bg-emerald-500 text-white" : "bg-gradient-to-r from-indigo-600 to-violet-600 text-white hover:from-indigo-700 hover:to-violet-700"}`}>
+                ${
+                  exported
+                    ? "bg-emerald-500 text-white"
+                    : "bg-gradient-to-r from-indigo-600 to-violet-600 text-white hover:from-indigo-700 hover:to-violet-700"
+                }`}
+            >
               {exported ? (
-                <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>Exported!</>
+                <>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                  Exported!
+                </>
               ) : (
-                <><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></svg>Export HTML/CSS</>
+                <>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  Export ZIP
+                </>
               )}
             </button>
 
             <div className="flex items-center gap-2 ml-1 pl-2 border-l border-gray-100">
               <span className="text-xs text-gray-500 hidden sm:inline">{user?.name}</span>
-              <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-red-500 transition">Logout</button>
+              <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-red-500 transition">
+                Logout
+              </button>
             </div>
           </div>
         </nav>
 
-        {/* ── 3-panel layout ── */}
         <div className="flex flex-1 overflow-hidden">
           <BlockPanel
             draggingOption={draggingOption}
             canvasBlockIds={canvasBlockIds}
             assignedTemplateId={assignedTemplateId}
           />
+
           <Canvas draggingOption={draggingOption} activeDropZone={activeDropZone} />
+
           <PropertiesPanel
             selectedBlock={selectedBlock}
             template={currentTemplate}
-            onEditableChange={updateEditable}
+            pageSettings={pageScripts}
+            onPageSettingsChange={handlePageSettingsChange}
+            onEditableChange={handleEditableChange}
             onCssVarChange={handleCssVarChange}
             onClassSwap={handleClassSwap}
             onBlockStyleChange={updateBlockStyle}

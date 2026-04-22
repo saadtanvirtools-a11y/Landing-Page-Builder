@@ -2,6 +2,7 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
+import { supabase } from './lib/supabase'
 
 const firebaseConfig = {
   apiKey: "AIzaSyBKzbJDwaDxSZtoe4IpvT3TRtFXjZgB_NQ",
@@ -17,3 +18,4 @@ const app = initializeApp(firebaseConfig);
 // ✅ THIS LINE WAS MISSING — exports db so auth.ts can import it
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+console.log(supabase)
