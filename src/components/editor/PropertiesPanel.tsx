@@ -102,8 +102,16 @@ interface Props {
 }
 
 // ─────────────────────────────────────────────────────────────
-// ACCORDION SECTION
+// UI HELPERS
 // ─────────────────────────────────────────────────────────────
+function SectionBadge({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="text-[10px] bg-indigo-100 text-indigo-600 font-bold px-2 py-0.5 rounded-full leading-none">
+      {children}
+    </span>
+  );
+}
+
 function AccordionSection({
   icon,
   title,
@@ -120,19 +128,17 @@ function AccordionSection({
   const [open, setOpen] = useState(defaultOpen);
 
   return (
-    <div className="mb-3 rounded-xl border border-gray-100 overflow-hidden shadow-sm">
+    <div className="mb-3 rounded-2xl border border-indigo-100/70 bg-white overflow-hidden shadow-[0_6px_20px_rgba(99,102,241,0.05)]">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-3 py-2.5 bg-linear-to-r from-gray-50 to-white hover:from-indigo-50 hover:to-white transition-all duration-150"
+        className="w-full flex items-center justify-between px-4 py-3 bg-gradient-to-r from-indigo-50/80 via-white to-violet-50/70 hover:from-indigo-100/70 hover:to-violet-100/60 transition-all duration-150"
       >
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5 min-w-0">
           <span className="text-sm">{icon}</span>
-          <span className="text-xs font-bold text-gray-600 uppercase tracking-wide">{title}</span>
-          {badge !== undefined && badge > 0 && (
-            <span className="text-xs bg-indigo-100 text-indigo-600 font-bold px-1.5 py-0.5 rounded-full leading-none">
-              {badge}
-            </span>
-          )}
+          <span className="text-[11px] font-bold text-slate-700 uppercase tracking-[0.14em] truncate">
+            {title}
+          </span>
+          {badge !== undefined && badge > 0 && <SectionBadge>{badge}</SectionBadge>}
         </div>
 
         <svg
@@ -140,22 +146,22 @@ function AccordionSection({
           height="14"
           viewBox="0 0 24 24"
           fill="none"
-          stroke="#9ca3af"
+          stroke="#7c83a3"
           strokeWidth="2.5"
-          className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+          className={`transition-transform duration-200 shrink-0 ${open ? "rotate-180" : ""}`}
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
       </button>
 
-      {open && <div className="px-3 pb-3 pt-2 bg-white space-y-2">{children}</div>}
+      {open && <div className="px-4 pb-4 pt-3 bg-white space-y-3">{children}</div>}
     </div>
   );
 }
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return (
-    <label className="block text-xs font-semibold text-gray-400 mb-1 uppercase tracking-wide">
+    <label className="block text-[11px] font-semibold text-slate-500 mb-1.5 uppercase tracking-[0.14em]">
       {children}
     </label>
   );
@@ -176,7 +182,7 @@ function TextInput({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-300 bg-gray-50 transition-all placeholder:text-gray-300"
+      className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-300 bg-slate-50/80 transition-all placeholder:text-slate-300"
     />
   );
 }
@@ -195,7 +201,7 @@ function TextArea({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       rows={rows}
-      className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-indigo-300 resize-none bg-gray-50 transition-all"
+      className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-300 resize-none bg-slate-50/80 transition-all"
     />
   );
 }
@@ -208,14 +214,14 @@ function LinkField({
   onChange: (v: string) => void;
 }) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-2.5">
       <TextInput value={value} onChange={onChange} placeholder="https://example.com" />
       {value && (
         <a
           href={value}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-700 font-semibold"
+          className="inline-flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-700 font-semibold"
         >
           Open link
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -249,9 +255,9 @@ function ImageField({
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2.5">
       {value && (
-        <div className="rounded-xl border-2 border-gray-100 bg-gray-50 h-28 flex items-center justify-center overflow-hidden relative group">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 h-28 flex items-center justify-center overflow-hidden relative group shadow-inner">
           <img
             src={value}
             alt="preview"
@@ -260,8 +266,8 @@ function ImageField({
               (e.target as HTMLImageElement).style.display = "none";
             }}
           />
-          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all flex items-center justify-center">
-            <span className="opacity-0 group-hover:opacity-100 text-xs text-white font-semibold bg-black/50 px-2 py-1 rounded-lg transition-all">
+          <div className="absolute inset-0 bg-black/0 group-hover:bg-indigo-950/8 transition-all flex items-center justify-center">
+            <span className="opacity-0 group-hover:opacity-100 text-xs text-white font-semibold bg-indigo-900/70 px-2.5 py-1 rounded-lg transition-all">
               Change Image
             </span>
           </div>
@@ -273,13 +279,13 @@ function ImageField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder="https://example.com/image.jpg"
-        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50 placeholder:text-gray-300"
+        className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-xs font-mono text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-slate-50/80 placeholder:text-slate-300"
       />
 
       <button
         type="button"
         onClick={() => fileRef.current?.click()}
-        className="w-full flex items-center justify-center gap-2 px-3 py-2.5 border-2 border-dashed border-indigo-200 rounded-xl text-xs text-indigo-500 font-semibold hover:bg-indigo-50 hover:border-indigo-400 transition-all duration-150"
+        className="w-full flex items-center justify-center gap-2 px-3 py-2.5 border border-dashed border-indigo-300 rounded-xl text-xs text-indigo-600 font-semibold hover:bg-indigo-50 hover:border-indigo-400 transition-all duration-150 bg-white"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -314,8 +320,8 @@ function ColorPicker({
   const safeValue = value && value.startsWith("#") ? value : "#ffffff";
 
   return (
-    <div className="flex items-center gap-3 p-2.5 rounded-xl bg-gray-50 border border-gray-100 hover:border-indigo-200 transition-all">
-      <div className="relative w-10 h-10 rounded-xl overflow-hidden border-2 border-white shadow-md shrink-0 cursor-pointer hover:scale-105 transition-transform">
+    <div className="flex items-center gap-3 p-3 rounded-2xl bg-slate-50/80 border border-slate-200 hover:border-indigo-200 transition-all">
+      <div className="relative w-10 h-10 rounded-xl overflow-hidden border-2 border-white shadow-md shrink-0 cursor-pointer hover:scale-[1.03] transition-transform">
         <input
           type="color"
           value={safeValue}
@@ -335,13 +341,13 @@ function ColorPicker({
       </div>
 
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-semibold text-gray-600 mb-1 capitalize">{label}</p>
+        <p className="text-xs font-semibold text-slate-700 mb-1 capitalize">{label}</p>
         <input
           type="text"
           value={value || ""}
           onChange={(e) => onChange(varName, e.target.value)}
           placeholder="#ffffff"
-          className="w-full px-2 py-1 border border-gray-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+          className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-mono text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white"
         />
       </div>
     </div>
@@ -375,8 +381,8 @@ function InlineColorPicker({
   };
 
   return (
-    <div className="flex items-center gap-3 p-2.5 rounded-xl bg-gray-50 border border-gray-100 hover:border-indigo-200 transition-all">
-      <div className="relative w-10 h-10 rounded-xl overflow-hidden border-2 border-white shadow-md shrink-0 cursor-pointer hover:scale-105 transition-transform">
+    <div className="flex items-center gap-3 p-3 rounded-2xl bg-slate-50/80 border border-slate-200 hover:border-indigo-200 transition-all">
+      <div className="relative w-10 h-10 rounded-xl overflow-hidden border-2 border-white shadow-md shrink-0 cursor-pointer hover:scale-[1.03] transition-transform">
         <input
           type="color"
           value={toHex(value)}
@@ -396,13 +402,13 @@ function InlineColorPicker({
       </div>
 
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-semibold text-gray-600 mb-1 capitalize">{label}</p>
+        <p className="text-xs font-semibold text-slate-700 mb-1 capitalize">{label}</p>
         <input
           type="text"
           value={value || ""}
           onChange={(e) => onChange(e.target.value)}
           placeholder="#ffffff"
-          className="w-full px-2 py-1 border border-gray-200 rounded-lg text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
+          className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-mono text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white"
         />
       </div>
     </div>
@@ -425,7 +431,7 @@ function SelectField({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-gray-50 appearance-none cursor-pointer pr-8"
+        className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-slate-50/80 appearance-none cursor-pointer pr-8"
       >
         {placeholder && <option value="">{placeholder}</option>}
         {options.map((o) => (
@@ -436,12 +442,12 @@ function SelectField({
       </select>
 
       <svg
-        className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+        className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"
         width="12"
         height="12"
         viewBox="0 0 24 24"
         fill="none"
-        stroke="#9ca3af"
+        stroke="#8f96b2"
         strokeWidth="2.5"
       >
         <polyline points="6 9 12 15 18 9" />
@@ -465,10 +471,10 @@ function PaddingSlider({
   const pct = ((idx === -1 ? 0 : idx) / (steps.length - 1)) * 100;
 
   return (
-    <div className="p-2.5 rounded-xl bg-gray-50 border border-gray-100">
-      <div className="flex justify-between items-center mb-2">
-        <span className="text-xs font-semibold text-gray-500">{label}</span>
-        <span className="text-xs font-bold text-white bg-indigo-500 px-2 py-0.5 rounded-full min-w-7 text-center">
+    <div className="p-3 rounded-2xl bg-slate-50/80 border border-slate-200">
+      <div className="flex justify-between items-center mb-2.5">
+        <span className="text-xs font-semibold text-slate-600">{label}</span>
+        <span className="text-[11px] font-bold text-white bg-gradient-to-r from-indigo-500 to-violet-500 px-2 py-0.5 rounded-full min-w-8 text-center">
           {value}
         </span>
       </div>
@@ -484,8 +490,8 @@ function PaddingSlider({
       />
 
       <div className="flex justify-between mt-1">
-        <span className="text-xs text-gray-300">{steps[0]}</span>
-        <span className="text-xs text-gray-300">{steps[steps.length - 1]}</span>
+        <span className="text-[10px] text-slate-300">{steps[0]}</span>
+        <span className="text-[10px] text-slate-300">{steps[steps.length - 1]}</span>
       </div>
     </div>
   );
@@ -502,7 +508,7 @@ function BlockStylesSection({
 }) {
   return (
     <AccordionSection icon="🎛️" title="Block Styles" defaultOpen={true}>
-      <div className="space-y-3 pt-1">
+      <div className="space-y-3">
         <div>
           <FieldLabel>Background Color</FieldLabel>
           <InlineColorPicker
@@ -525,7 +531,7 @@ function PageSettingsSection({
 }) {
   return (
     <AccordionSection icon="🌐" title="Page Settings" defaultOpen={true}>
-      <div className="space-y-3 pt-1">
+      <div className="space-y-3">
         <div>
           <FieldLabel>Page Title</FieldLabel>
           <TextInput
@@ -614,13 +620,13 @@ function EditableCard({
   const isTextLike = item.type === "text" || item.type === "link";
 
   return (
-    <div className="rounded-xl border border-gray-100 overflow-hidden bg-white shadow-sm">
+    <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white shadow-[0_4px_14px_rgba(15,23,42,0.04)]">
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50 transition-colors text-left"
+        className="w-full flex items-center gap-2.5 px-3.5 py-3 hover:bg-slate-50 transition-colors text-left"
       >
         <span
-          className="shrink-0 w-6 h-6 rounded-lg flex items-center justify-center text-xs"
+          className="shrink-0 w-7 h-7 rounded-xl flex items-center justify-center text-xs shadow-sm"
           style={{
             background: isImage ? "#fef3c7" : isLink ? "#dbeafe" : "#ede9fe",
             color: isImage ? "#92400e" : isLink ? "#1d4ed8" : "#5b21b6",
@@ -629,7 +635,7 @@ function EditableCard({
           {isImage ? "🖼" : isLink ? "🔗" : "T"}
         </span>
 
-        <span className="flex-1 text-xs font-semibold text-gray-700 truncate">{label}</span>
+        <span className="flex-1 text-xs font-semibold text-slate-700 truncate">{label}</span>
 
         <svg
           width="12"
@@ -645,7 +651,7 @@ function EditableCard({
       </button>
 
       {open && (
-        <div className="px-3 pb-3 space-y-3 border-t border-gray-50">
+        <div className="px-3.5 pb-3.5 space-y-3 border-t border-slate-100">
           <div className="pt-2">
             {isImage ? (
               <ImageField value={item.content} onChange={(v) => onEditableChange(item.id, v)} />
@@ -659,8 +665,8 @@ function EditableCard({
           </div>
 
           {isTextLike && (
-            <div className="space-y-2">
-              <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">Typography</p>
+            <div className="space-y-2.5">
+              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.14em]">Typography</p>
 
               <div>
                 <FieldLabel>Font Size</FieldLabel>
@@ -676,7 +682,7 @@ function EditableCard({
                 {item.tailwindClass
                   .split(" ")
                   .some((c) => c.includes(":") && FONT_SIZE_OPTIONS.includes(stripPrefix(c))) && (
-                  <p className="text-xs text-amber-500 mt-1">
+                  <p className="text-xs text-amber-500 mt-1.5">
                     ⚠ Responsive sizes removed when you pick a size
                   </p>
                 )}
@@ -698,8 +704,8 @@ function EditableCard({
           )}
 
           {Object.keys(item.colorVars).length > 0 && (
-            <div className="space-y-2">
-              <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">Colors</p>
+            <div className="space-y-2.5">
+              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.14em]">Colors</p>
               {Object.entries(item.colorVars)
                 .filter(([prop]) => prop !== "bg")
                 .map(([prop, varName]) => (
@@ -715,8 +721,8 @@ function EditableCard({
           )}
 
           {extraProps.length > 0 && (
-            <div className="space-y-2">
-              <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">Layout</p>
+            <div className="space-y-2.5">
+              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-[0.14em]">Layout</p>
 
               {styleProps.includes("border-radius") && (
                 <div>
@@ -787,7 +793,7 @@ function BlockColorVars({
 
   return (
     <AccordionSection icon="🎨" title="Section Colors" badge={entries.length}>
-      <div className="space-y-2 pt-1">
+      <div className="space-y-2.5">
         {entries.map(([prop, varName]) => (
           <ColorPicker
             key={varName}
@@ -804,50 +810,53 @@ function BlockColorVars({
 
 function EmptyState() {
   return (
-    <div className="w-72 bg-white border-l border-gray-100 flex flex-col h-full">
-      <div className="px-4 py-4 border-b border-gray-100 bg-linear-to-r from-slate-50 to-white">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-linear-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-sm">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+    <div className="w-80 bg-gradient-to-b from-white to-slate-50 border-l border-indigo-100 flex flex-col h-full">
+      <div className="px-5 py-4 border-b border-indigo-100 bg-white/90">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-sm">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.4">
               <circle cx="12" cy="12" r="3" />
               <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83 M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83" />
             </svg>
           </div>
-          <h2 className="font-bold text-gray-700 text-sm">Properties</h2>
+          <div>
+            <h2 className="font-semibold text-slate-800 text-sm">Properties</h2>
+            <p className="text-xs text-slate-400 mt-0.5">Section editor</p>
+          </div>
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col items-center justify-center px-6 text-center gap-4">
+      <div className="flex-1 flex flex-col items-center justify-center px-7 text-center gap-5">
         <div className="relative">
-          <div className="w-20 h-20 rounded-2xl bg-linear-to-br from-indigo-50 to-violet-50 flex items-center justify-center border border-indigo-100">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#a5b4fc" strokeWidth="1.5">
+          <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-indigo-50 to-violet-50 flex items-center justify-center border border-indigo-100 shadow-sm">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#8b95ff" strokeWidth="1.5">
               <rect x="3" y="3" width="18" height="18" rx="3" />
               <path d="M3 9h18M9 21V9" />
             </svg>
           </div>
 
-          <div className="absolute -top-1 -right-1 w-6 h-6 bg-indigo-500 rounded-full flex items-center justify-center shadow-md">
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
+          <div className="absolute -top-1.5 -right-1.5 w-7 h-7 bg-indigo-500 rounded-full flex items-center justify-center shadow-md">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3">
               <path d="M12 5v14M5 12h14" />
             </svg>
           </div>
         </div>
 
         <div>
-          <p className="text-sm font-bold text-gray-600">Select a Section</p>
-          <p className="text-xs text-gray-400 mt-1.5 leading-relaxed">
-            Click any section in the canvas preview to edit its content, colors, and styles.
+          <p className="text-sm font-semibold text-slate-700">Select a Section</p>
+          <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+            Click any section in the canvas preview to edit its content, styles, colors, and page settings.
           </p>
         </div>
 
-        <div className="flex items-center gap-2 text-xs text-gray-300 bg-gray-50 px-3 py-2 rounded-xl border border-gray-100">
+        <div className="flex items-center gap-2 text-xs text-slate-400 bg-white px-3.5 py-2.5 rounded-xl border border-slate-200 shadow-sm">
           <span>👆</span>
-          <span>Click on the canvas below</span>
+          <span>Choose a section from the canvas</span>
         </div>
       </div>
 
-      <div className="px-4 py-3 border-t border-gray-100 bg-gray-50">
-        <p className="text-xs text-gray-400 text-center">⚡ Live editing — no save needed</p>
+      <div className="px-5 py-3 border-t border-indigo-100 bg-white/80">
+        <p className="text-xs text-slate-400 text-center">Changes apply instantly to preview</p>
       </div>
     </div>
   );
@@ -876,53 +885,53 @@ export default function PropertiesPanel({
   const linkEditables = editables.filter((e) => e.type === "link");
 
   return (
-    <div className="w-72 bg-white border-l border-gray-100 flex flex-col h-full overflow-hidden">
+    <div className="w-80 bg-gradient-to-b from-white to-slate-50 border-l border-indigo-100 flex flex-col h-full overflow-hidden">
       {/* HEADER */}
-      <div className="px-4 py-3.5 border-b border-gray-100 bg-linear-to-r from-indigo-600 to-violet-600 shrink-0">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center shrink-0 border border-white/30">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+      <div className="px-5 py-4 border-b border-indigo-100 bg-gradient-to-r from-indigo-600 to-violet-600 shrink-0 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-2xl bg-white/18 backdrop-blur flex items-center justify-center shrink-0 border border-white/25">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.4">
               <path d="M12 20h9" />
               <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
             </svg>
           </div>
 
           <div className="min-w-0 flex-1">
-            <h2 className="font-bold text-white text-sm leading-tight truncate capitalize">
+            <h2 className="font-semibold text-white text-sm leading-tight truncate capitalize">
               {blockName || blockId}
             </h2>
-            <p className="text-xs text-indigo-200 leading-tight mt-0.5">
+            <p className="text-xs text-indigo-100 leading-tight mt-0.5">
               {editables.length} field{editables.length !== 1 ? "s" : ""} · live editing
             </p>
           </div>
 
-          <div className="shrink-0 bg-white/20 text-white text-xs font-bold px-2 py-1 rounded-lg border border-white/20">
+          <div className="shrink-0 bg-white/15 text-white text-[11px] font-bold px-2 py-1 rounded-lg border border-white/20">
             #{blockId}
           </div>
         </div>
 
         <div className="flex items-center gap-2 mt-3 flex-wrap">
           {Object.keys(colorVars ?? {}).length > 0 && (
-            <span className="flex items-center gap-1 text-xs bg-white/15 text-white px-2 py-1 rounded-lg border border-white/20">
+            <span className="flex items-center gap-1 text-[11px] bg-white/15 text-white px-2 py-1 rounded-lg border border-white/20">
               🎨 {Object.keys(colorVars ?? {}).length} color
               {Object.keys(colorVars ?? {}).length !== 1 ? "s" : ""}
             </span>
           )}
 
           {textEditables.length > 0 && (
-            <span className="flex items-center gap-1 text-xs bg-white/15 text-white px-2 py-1 rounded-lg border border-white/20">
+            <span className="flex items-center gap-1 text-[11px] bg-white/15 text-white px-2 py-1 rounded-lg border border-white/20">
               ✏️ {textEditables.length} text
             </span>
           )}
 
           {imageEditables.length > 0 && (
-            <span className="flex items-center gap-1 text-xs bg-white/15 text-white px-2 py-1 rounded-lg border border-white/20">
+            <span className="flex items-center gap-1 text-[11px] bg-white/15 text-white px-2 py-1 rounded-lg border border-white/20">
               🖼 {imageEditables.length} img
             </span>
           )}
 
           {linkEditables.length > 0 && (
-            <span className="flex items-center gap-1 text-xs bg-white/15 text-white px-2 py-1 rounded-lg border border-white/20">
+            <span className="flex items-center gap-1 text-[11px] bg-white/15 text-white px-2 py-1 rounded-lg border border-white/20">
               🔗 {linkEditables.length} link
             </span>
           )}
@@ -930,7 +939,7 @@ export default function PropertiesPanel({
       </div>
 
       {/* BODY */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1 scrollbar-thin scrollbar-thumb-gray-200">
+      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1.5 scrollbar-thin scrollbar-thumb-indigo-100">
         <PageSettingsSection
           pageSettings={pageSettings}
           onPageSettingsChange={onPageSettingsChange}
@@ -950,7 +959,7 @@ export default function PropertiesPanel({
 
         {textEditables.length > 0 && (
           <AccordionSection icon="✏️" title="Text Content" badge={textEditables.length}>
-            <div className="space-y-2 pt-1">
+            <div className="space-y-2.5">
               {textEditables.map((item) => (
                 <EditableCard
                   key={item.id}
@@ -967,7 +976,7 @@ export default function PropertiesPanel({
 
         {linkEditables.length > 0 && (
           <AccordionSection icon="🔗" title="Links" badge={linkEditables.length}>
-            <div className="space-y-2 pt-1">
+            <div className="space-y-2.5">
               {linkEditables.map((item) => (
                 <EditableCard
                   key={item.id}
@@ -984,7 +993,7 @@ export default function PropertiesPanel({
 
         {imageEditables.length > 0 && (
           <AccordionSection icon="🖼️" title="Images" badge={imageEditables.length}>
-            <div className="space-y-2 pt-1">
+            <div className="space-y-2.5">
               {imageEditables.map((item) => (
                 <EditableCard
                   key={item.id}
@@ -1000,18 +1009,18 @@ export default function PropertiesPanel({
         )}
 
         {editables.length === 0 && Object.keys(colorVars ?? {}).length === 0 && (
-          <div className="text-center py-8">
+          <div className="text-center py-10">
             <div className="text-3xl mb-2">🔍</div>
-            <p className="text-xs font-semibold text-gray-400">No editable fields</p>
-            <p className="text-xs text-gray-300 mt-1">Use Block Styles above to customize.</p>
+            <p className="text-xs font-semibold text-slate-500">No editable fields</p>
+            <p className="text-xs text-slate-400 mt-1">Use block styles above to customize.</p>
           </div>
         )}
       </div>
 
       {/* FOOTER */}
-      <div className="px-4 py-2.5 border-t border-gray-100 bg-linear-to-r from-gray-50 to-white shrink-0 flex items-center justify-center gap-2">
+      <div className="px-5 py-3 border-t border-indigo-100 bg-white/80 shrink-0 flex items-center justify-center gap-2">
         <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-        <p className="text-xs text-gray-400">Changes apply instantly to the canvas</p>
+        <p className="text-xs text-slate-400">Changes apply instantly to the canvas</p>
       </div>
     </div>
   );

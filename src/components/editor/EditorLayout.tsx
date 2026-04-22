@@ -107,6 +107,17 @@ function getExtensionFromUrlOrType(url: string, contentType?: string): string {
   return "png";
 }
 
+function getMimeTypeFromExt(ext: string): string {
+  const lower = ext.toLowerCase();
+  if (lower === "png") return "image/png";
+  if (lower === "jpg" || lower === "jpeg") return "image/jpeg";
+  if (lower === "svg") return "image/svg+xml";
+  if (lower === "webp") return "image/webp";
+  if (lower === "gif") return "image/gif";
+  if (lower === "ico") return "image/x-icon";
+  return "image/png";
+}
+
 function isExportableAssetUrl(url: string): boolean {
   if (!url) return false;
 
@@ -369,8 +380,6 @@ export default function EditorLayout() {
     fetchData();
   }, []);
 
-  
-
   useEffect(() => {
     if (!assignedTemplateId) return;
     if (currentTemplate?.id === assignedTemplateId) return;
@@ -385,6 +394,51 @@ export default function EditorLayout() {
       })
       .catch((err) => console.error("[EditorLayout] Failed to load assigned template:", err));
   }, [assignedTemplateId, currentTemplate?.id, loadTemplate]);
+
+  // ─────────────────────────────────────────────────────────────
+  // LIVE PAGE SETTINGS (Title, Meta, Favicon)
+  // ─────────────────────────────────────────────────────────────
+  // useEffect(() => {
+  //   if (!pageScripts) return;
+
+  //   document.title =
+  //     pageScripts.pageTitle?.trim() || templateName || "Landing Page Builder";
+
+  //   let metaDescription = document.querySelector(
+  //     'meta[name="description"]'
+  //   ) as HTMLMetaElement | null;
+
+  //   if (!metaDescription) {
+  //     metaDescription = document.createElement("meta");
+  //     metaDescription.setAttribute("name", "description");
+  //     document.head.appendChild(metaDescription);
+  //   }
+
+  //   metaDescription.setAttribute(
+  //     "content",
+  //     pageScripts.metaDescription?.trim() || ""
+  //   );
+
+  //   let favicon = document.querySelector(
+  //     'link[rel="icon"]'
+  //   ) as HTMLLinkElement | null;
+
+  //   if (!favicon) {
+  //     favicon = document.createElement("link");
+  //     favicon.setAttribute("rel", "icon");
+  //     document.head.appendChild(favicon);
+  //   }
+
+  //   if (pageScripts.faviconUrl?.trim()) {
+  //     const url = pageScripts.faviconUrl.trim();
+  //     const ext = getExtensionFromUrlOrType(url);
+  //     favicon.setAttribute("type", getMimeTypeFromExt(ext));
+  //     favicon.setAttribute("href", url);
+  //   } else {
+  //     favicon.removeAttribute("href");
+  //     favicon.removeAttribute("type");
+  //   }
+  // }, [pageScripts, templateName]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
@@ -592,54 +646,28 @@ export default function EditorLayout() {
       head.appendChild(metaDescription);
     }
 
-// ✅ ALWAYS ensure favicon exists
-const existingFavicon = head.querySelectorAll('link[rel="icon"]');
-existingFavicon.forEach(el => el.remove());
+    const existingFavicon = head.querySelector('link[rel="icon"]');
+    if (existingFavicon) existingFavicon.remove();
 
-let faviconPath = "";
+    if (pageScripts.faviconUrl?.trim()) {
+      try {
+        const faviconUrl = pageScripts.faviconUrl.trim();
+        const faviconBlob = await blobFromAnyUrl(faviconUrl);
+        const faviconExt = getExtensionFromUrlOrType(faviconUrl, faviconBlob.type);
+        const faviconMime = getMimeTypeFromExt(faviconExt);
+        const faviconPath = `images/favicon.${faviconExt}`;
 
-// 1️⃣ If user provided favicon → use it
-if (pageScripts.faviconUrl?.trim()) {
-  try {
-    faviconPath = await localizeAsset(
-      pageScripts.faviconUrl.trim(),
-      zip,
-      assetMap,
-      usedNames
-    );
-  } catch (err) {
-    console.error("[Export] Failed to localize favicon:", err);
-    faviconPath = pageScripts.faviconUrl.trim();
-  }
-}
+        zip.file(faviconPath, faviconBlob);
 
-// 2️⃣ If NO favicon → use default
-if (!faviconPath) {
-  // create simple default favicon (small blank png)
-  const defaultFaviconBlob = new Blob(
-    [
-      new Uint8Array([
-        137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,
-        0,0,0,16,0,0,0,16,8,6,0,0,0,31,243,255,97,
-        0,0,0,12,73,68,65,84,120,156,99,248,15,4,0,9,
-        251,3,253,160,149,196,164,0,0,0,0,73,69,78,68,
-        174,66,96,130
-      ])
-    ],
-    { type: "image/png" }
-  );
-
-  const defaultPath = "images/favicon.png";
-  zip.file(defaultPath, defaultFaviconBlob);
-  faviconPath = defaultPath;
-}
-
-// 3️⃣ Add favicon to head
-const favicon = doc2.createElement("link");
-favicon.setAttribute("rel", "icon");
-favicon.setAttribute("type", "image/png");
-favicon.setAttribute("href", faviconPath);
-head.appendChild(favicon);
+        const favicon = doc2.createElement("link");
+        favicon.setAttribute("rel", "icon");
+        favicon.setAttribute("type", faviconMime);
+        favicon.setAttribute("href", faviconPath);
+        head.appendChild(favicon);
+      } catch (err) {
+        console.error("[Export] Failed favicon:", err);
+      }
+    }
 
     if (!head.querySelector('meta[name="viewport"]')) {
       const viewport = doc2.createElement("meta");

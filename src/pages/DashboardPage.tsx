@@ -74,28 +74,29 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
-      {/* Navbar */}
-      <nav className="sticky top-0 z-20 border-b border-white/60 bg-white/85 backdrop-blur">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+      {/* Top Nav */}
+      <nav className="sticky top-0 z-20 border-b border-indigo-100 bg-white/90 backdrop-blur">
+        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-200">
-              <span className="text-white font-bold text-base">LP</span>
+            <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 flex items-center justify-center shadow-sm">
+              <span className="text-white font-bold text-sm tracking-wide">LP</span>
             </div>
+
             <div>
-              <h1 className="text-xl font-bold text-slate-800 leading-tight">LP Builder</h1>
-              <p className="text-xs text-slate-400 leading-tight">Your workspace dashboard</p>
+              <h1 className="text-lg font-semibold text-indigo-950 leading-tight">LP Builder</h1>
+              <p className="text-xs text-indigo-400 leading-tight">Dashboard</p>
             </div>
           </div>
 
           <div className="flex items-center gap-4">
             <div className="hidden sm:block text-right">
-              <p className="text-sm text-slate-500">Hello,</p>
-              <p className="text-sm font-bold text-slate-800">{user?.name}</p>
+              <p className="text-xs text-indigo-400">Signed in as</p>
+              <p className="text-sm font-semibold text-indigo-950">{user?.name}</p>
             </div>
 
             <button
               onClick={handleLogout}
-              className="px-4 py-2.5 bg-red-500 text-white text-sm font-semibold rounded-xl hover:bg-red-600 transition shadow-sm"
+              className="px-4 py-2.5 rounded-xl border border-indigo-200 bg-white text-indigo-700 text-sm font-medium hover:bg-indigo-50 transition"
             >
               Logout
             </button>
@@ -104,135 +105,142 @@ export default function DashboardPage() {
       </nav>
 
       {/* Main */}
-      <div className="max-w-6xl mx-auto px-6 py-10">
-        {/* Hero */}
-        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 p-8 md:p-10 shadow-xl shadow-indigo-100 mb-8">
-          <div className="absolute inset-0 opacity-20">
-            <div className="absolute top-0 right-0 w-72 h-72 bg-white rounded-full blur-3xl" />
-            <div className="absolute bottom-0 left-0 w-64 h-64 bg-white rounded-full blur-3xl" />
-          </div>
+      <div className="max-w-7xl mx-auto px-6 py-10">
+        {/* Hero / Intro */}
+        <div className="rounded-[28px] border border-indigo-100 bg-white shadow-sm overflow-hidden">
+          <div className="grid grid-cols-1 lg:grid-cols-[1.4fr_0.6fr]">
+            <div className="px-8 md:px-10 py-10 md:py-12">
+              <div className="inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.16em] text-indigo-600">
+                Workspace Overview
+              </div>
 
-          <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-8">
-            <div className="max-w-2xl">
-              <p className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-indigo-100 bg-white/10 px-3 py-1.5 rounded-full border border-white/15">
-                Welcome back
-              </p>
-
-              <h2 className="mt-4 text-3xl md:text-4xl font-extrabold text-white leading-tight">
-                {user?.name}, your landing page workspace is ready ✨
+              <h2 className="mt-5 text-3xl md:text-4xl font-semibold tracking-tight text-indigo-950 leading-tight">
+                Welcome back, {user?.name}
               </h2>
 
-              <p className="mt-3 text-sm md:text-base text-indigo-100 max-w-xl leading-relaxed">
-                Manage your assigned template, review saved progress, and continue building your page with a cleaner workflow.
+              <p className="mt-4 max-w-2xl text-sm md:text-base leading-7 text-slate-600">
+                Access your assigned template, review your latest saved work, and continue editing with a cleaner workflow built for day-to-day use.
               </p>
 
-              <div className="mt-6 flex flex-wrap items-center gap-3">
-                {user?.assignedTemplateId && (
+              <div className="mt-8 flex flex-wrap items-center gap-3">
+                {user?.assignedTemplateId ? (
                   <button
                     onClick={() => handleOpenEditor(user.assignedTemplateId)}
-                    className="px-6 py-3 bg-white text-indigo-700 font-bold rounded-2xl hover:bg-indigo-50 transition shadow-sm"
+                    className="px-6 py-3 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 text-white text-sm font-semibold hover:from-indigo-700 hover:to-violet-700 transition"
                   >
-                    Open Editor →
+                    Open Editor
                   </button>
+                ) : (
+                  <div className="px-5 py-3 rounded-2xl bg-indigo-50 text-indigo-400 text-sm font-medium">
+                    No template assigned
+                  </div>
                 )}
 
-                <div className="px-4 py-3 rounded-2xl bg-white/10 border border-white/15 text-white text-sm">
-                  Latest save: <span className="font-semibold">{latestSaved}</span>
+                <div className="px-4 py-3 rounded-2xl border border-indigo-100 bg-indigo-50/60 text-sm text-slate-600">
+                  Latest save: <span className="font-semibold text-indigo-900">{latestSaved}</span>
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 min-w-[280px]">
-              <div className="rounded-2xl bg-white/12 border border-white/15 p-4 backdrop-blur-sm">
-                <p className="text-indigo-100 text-xs uppercase tracking-wide font-semibold">Assigned</p>
-                <p className="mt-2 text-2xl font-extrabold text-white">
-                  {user?.assignedTemplateId ? "1" : "0"}
-                </p>
-                <p className="text-indigo-100 text-xs mt-1">template</p>
-              </div>
+            <div className="border-t lg:border-t-0 lg:border-l border-indigo-100 bg-indigo-50/50 px-8 py-8 md:px-10 md:py-10">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-500">
+                Snapshot
+              </p>
 
-              <div className="rounded-2xl bg-white/12 border border-white/15 p-4 backdrop-blur-sm">
-                <p className="text-indigo-100 text-xs uppercase tracking-wide font-semibold">Saved</p>
-                <p className="mt-2 text-2xl font-extrabold text-white">{totalProjects}</p>
-                <p className="text-indigo-100 text-xs mt-1">project{totalProjects !== 1 ? "s" : ""}</p>
-              </div>
+              <div className="mt-6 grid grid-cols-1 gap-4">
+                <div className="rounded-2xl border border-indigo-100 bg-white p-4">
+                  <p className="text-xs uppercase tracking-wide text-indigo-500 font-medium">Assigned Template</p>
+                  <p className="mt-2 text-2xl font-semibold text-indigo-950">
+                    {user?.assignedTemplateId ? "1" : "0"}
+                  </p>
+                </div>
 
-              <div className="rounded-2xl bg-white/12 border border-white/15 p-4 backdrop-blur-sm col-span-2">
-                <p className="text-indigo-100 text-xs uppercase tracking-wide font-semibold">Account</p>
-                <p className="mt-2 text-lg font-bold text-white">{user?.email}</p>
-                <p className="text-indigo-100 text-xs mt-1">Role: {user?.role}</p>
+                <div className="rounded-2xl border border-indigo-100 bg-white p-4">
+                  <p className="text-xs uppercase tracking-wide text-indigo-500 font-medium">Saved Projects</p>
+                  <p className="mt-2 text-2xl font-semibold text-indigo-950">{totalProjects}</p>
+                </div>
+
+                <div className="rounded-2xl border border-indigo-100 bg-white p-4">
+                  <p className="text-xs uppercase tracking-wide text-indigo-500 font-medium">Role</p>
+                  <p className="mt-2 text-base font-semibold capitalize text-indigo-950">{user?.role || "N/A"}</p>
+                </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Top grid */}
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-          {/* Left large column */}
+        {/* Content Grid */}
+        <div className="mt-8 grid grid-cols-1 xl:grid-cols-3 gap-8">
+          {/* Left */}
           <div className="xl:col-span-2 space-y-8">
             {/* Assigned Template */}
-            <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-8">
-              <div className="flex items-start justify-between gap-4 flex-col sm:flex-row">
+            <section className="rounded-[28px] border border-indigo-100 bg-white shadow-sm p-8">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-5">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.18em] text-indigo-500">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-500">
                     Assigned Template
                   </p>
-                  <h3 className="mt-2 text-2xl font-extrabold text-slate-800">
+
+                  <h3 className="mt-3 text-2xl font-semibold text-indigo-950">
                     {user?.assignedTemplateName || "No template assigned"}
                   </h3>
-                  <p className="mt-2 text-sm text-slate-500 max-w-xl">
-                    This is the template currently assigned to your account. Open it to continue editing your page.
+
+                  <p className="mt-2 text-sm leading-6 text-slate-600 max-w-xl">
+                    This is the template currently linked to your account. Open it to continue editing your landing page.
                   </p>
                 </div>
 
                 {user?.assignedTemplateId && (
                   <button
                     onClick={() => handleOpenEditor(user.assignedTemplateId)}
-                    className="px-6 py-3 bg-gradient-to-r from-indigo-600 to-violet-600 text-white font-bold rounded-2xl hover:from-indigo-700 hover:to-violet-700 transition shadow-sm shrink-0"
+                    className="shrink-0 px-5 py-3 rounded-2xl border border-indigo-600 bg-gradient-to-r from-indigo-600 to-violet-600 text-white text-sm font-semibold hover:from-indigo-700 hover:to-violet-700 transition"
                   >
-                    Open Editor →
+                    Open Editor
                   </button>
                 )}
               </div>
 
               {user?.assignedTemplateId ? (
-                <div className="mt-6 rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-50 to-violet-50 p-5">
+                <div className="mt-6 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-5">
                   <div className="flex items-start gap-4">
-                    <div className="w-12 h-12 rounded-2xl bg-white shadow-sm border border-indigo-100 flex items-center justify-center text-xl">
+                    <div className="w-12 h-12 rounded-2xl border border-indigo-100 bg-white flex items-center justify-center text-lg shadow-sm">
                       📄
                     </div>
+
                     <div className="min-w-0">
-                      <p className="text-base font-bold text-indigo-700 truncate">
+                      <p className="text-base font-semibold text-indigo-950 truncate">
                         {user.assignedTemplateName}
                       </p>
-                      <p className="text-sm text-slate-500 mt-1 break-all">
+                      <p className="mt-1 text-sm text-slate-500 break-all">
                         Template ID: {user.assignedTemplateId}
                       </p>
                     </div>
                   </div>
                 </div>
               ) : (
-                <div className="mt-6 text-center py-10 rounded-2xl bg-slate-50 border border-slate-100">
-                  <div className="text-5xl mb-4">📋</div>
-                  <p className="text-slate-600 font-semibold">No template assigned yet.</p>
-                  <p className="text-slate-400 text-sm mt-1">
+                <div className="mt-6 rounded-2xl border border-dashed border-indigo-100 bg-indigo-50/50 py-10 px-6 text-center">
+                  <div className="text-4xl mb-3">📋</div>
+                  <p className="text-indigo-900 font-medium">No template assigned yet</p>
+                  <p className="text-sm text-slate-500 mt-1">
                     Please contact your admin to assign a template.
                   </p>
                 </div>
               )}
-            </div>
+            </section>
 
             {/* Saved Projects */}
-            <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-8">
-              <div className="mb-5">
-                <p className="text-xs font-bold uppercase tracking-[0.18em] text-violet-500">
+            <section className="rounded-[28px] border border-indigo-100 bg-white shadow-sm p-8">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-500">
                   Saved Projects
                 </p>
-                <h3 className="mt-2 text-2xl font-extrabold text-slate-800">
-                  Your recent saved work
+
+                <h3 className="mt-3 text-2xl font-semibold text-indigo-950">
+                  Recent work
                 </h3>
-                <p className="text-sm text-slate-500 mt-2">
-                  View your saved editor progress below. The main editor action is available from the assigned template card above.
+
+                <p className="mt-2 text-sm leading-6 text-slate-600">
+                  Review your most recent saved editor states below. The main action to continue editing remains in the assigned template section above.
                 </p>
               </div>
 
@@ -241,7 +249,7 @@ export default function DashboardPage() {
                   <div className="w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />
                 </div>
               ) : projects.length > 0 ? (
-                <div className="grid gap-4">
+                <div className="mt-6 grid gap-4">
                   {projects.map((project, index) => {
                     const blockCount = project.currentTemplate?.blocks?.length ?? 0;
                     const projectName =
@@ -252,30 +260,32 @@ export default function DashboardPage() {
                     return (
                       <div
                         key={project.id}
-                        className="rounded-2xl border border-slate-100 bg-gradient-to-r from-slate-50 to-white p-5 hover:border-indigo-200 hover:shadow-sm transition"
+                        className="rounded-2xl border border-indigo-100 bg-white p-5 hover:border-indigo-200 hover:shadow-sm transition"
                       >
                         <div className="flex items-start gap-4">
-                          <div className="w-11 h-11 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-center text-sm font-bold text-slate-600 shrink-0">
+                          <div className="w-11 h-11 rounded-2xl border border-indigo-100 bg-indigo-50 flex items-center justify-center text-sm font-semibold text-indigo-700 shrink-0">
                             {index + 1}
                           </div>
 
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
-                              <p className="text-base font-bold text-slate-800 truncate">
+                              <p className="text-base font-semibold text-indigo-950 truncate">
                                 {projectName}
                               </p>
+
                               {index === 0 && (
-                                <span className="text-[11px] font-bold px-2 py-1 rounded-full bg-emerald-100 text-emerald-600">
+                                <span className="text-[11px] font-semibold px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
                                   Latest
                                 </span>
                               )}
                             </div>
 
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-600">
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700">
                                 {blockCount} block{blockCount !== 1 ? "s" : ""}
                               </span>
-                              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-slate-500">
+
+                              <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-600">
                                 {formatSaved(project.savedAtIso)}
                               </span>
                             </div>
@@ -290,84 +300,92 @@ export default function DashboardPage() {
                   })}
                 </div>
               ) : (
-                <div className="text-center py-12 rounded-2xl bg-slate-50 border border-slate-100">
-                  <div className="text-5xl mb-4">📝</div>
-                  <p className="text-slate-600 font-semibold">No saved projects yet.</p>
-                  <p className="text-slate-400 text-sm mt-1">
+                <div className="mt-6 rounded-2xl border border-dashed border-indigo-100 bg-indigo-50/50 py-12 px-6 text-center">
+                  <div className="text-4xl mb-3">📝</div>
+                  <p className="text-indigo-900 font-medium">No saved projects yet</p>
+                  <p className="text-sm text-slate-500 mt-1">
                     Open your assigned template and click save to create your first project.
                   </p>
                 </div>
               )}
-            </div>
+            </section>
           </div>
 
-          {/* Right column */}
+          {/* Right */}
           <div className="space-y-8">
             {/* Account Info */}
-            <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-8">
-              <p className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
+            <section className="rounded-[28px] border border-indigo-100 bg-white shadow-sm p-8">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-500">
                 Account Info
               </p>
-              <h3 className="mt-2 text-2xl font-extrabold text-slate-800">Profile</h3>
+
+              <h3 className="mt-3 text-2xl font-semibold text-indigo-950">
+                Profile
+              </h3>
 
               <div className="mt-6 space-y-4">
-                <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                  <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide">Name</p>
-                  <p className="mt-1 text-sm font-bold text-slate-800">{user?.name || "N/A"}</p>
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4">
+                  <p className="text-xs text-indigo-500 font-medium uppercase tracking-wide">Name</p>
+                  <p className="mt-1 text-sm font-semibold text-indigo-950">{user?.name || "N/A"}</p>
                 </div>
 
-                <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                  <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide">Email</p>
-                  <p className="mt-1 text-sm font-bold text-slate-800 break-all">{user?.email || "N/A"}</p>
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4">
+                  <p className="text-xs text-indigo-500 font-medium uppercase tracking-wide">Email</p>
+                  <p className="mt-1 text-sm font-semibold text-indigo-950 break-all">{user?.email || "N/A"}</p>
                 </div>
 
-                <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                  <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide">Role</p>
-                  <p className="mt-1 text-sm font-bold text-indigo-600 capitalize">{user?.role || "N/A"}</p>
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4">
+                  <p className="text-xs text-indigo-500 font-medium uppercase tracking-wide">Role</p>
+                  <p className="mt-1 text-sm font-semibold text-indigo-950 capitalize">{user?.role || "N/A"}</p>
                 </div>
 
-                <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4">
-                  <p className="text-xs text-slate-400 font-semibold uppercase tracking-wide">Member Since</p>
-                  <p className="mt-1 text-sm font-bold text-slate-800">
+                <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4">
+                  <p className="text-xs text-indigo-500 font-medium uppercase tracking-wide">Member Since</p>
+                  <p className="mt-1 text-sm font-semibold text-indigo-950">
                     {user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : "N/A"}
                   </p>
                 </div>
               </div>
-            </div>
+            </section>
 
-            {/* Quick Summary */}
-            <div className="bg-gradient-to-br from-indigo-600 to-violet-600 rounded-3xl shadow-lg shadow-indigo-100 p-8 text-white">
-              <p className="text-xs uppercase tracking-[0.18em] font-bold text-indigo-100">
-                Quick Summary
+            {/* Summary */}
+            <section className="rounded-[28px] border border-indigo-100 bg-gradient-to-br from-indigo-600 to-violet-600 shadow-sm p-8 text-white">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-100">
+                Summary
               </p>
-              <h3 className="mt-2 text-2xl font-extrabold">Workspace Status</h3>
 
-              <div className="mt-6 space-y-4">
-                <div className="flex items-center justify-between rounded-2xl bg-white/10 border border-white/10 px-4 py-3">
+              <h3 className="mt-3 text-2xl font-semibold text-white">
+                Workspace Status
+              </h3>
+
+              <div className="mt-6 space-y-3">
+                <div className="flex items-center justify-between rounded-2xl border border-white/15 bg-white/10 px-4 py-3">
                   <span className="text-sm text-indigo-100">Assigned Template</span>
-                  <span className="text-sm font-bold">{user?.assignedTemplateId ? "Available" : "None"}</span>
+                  <span className="text-sm font-semibold text-white">
+                    {user?.assignedTemplateId ? "Available" : "None"}
+                  </span>
                 </div>
 
-                <div className="flex items-center justify-between rounded-2xl bg-white/10 border border-white/10 px-4 py-3">
+                <div className="flex items-center justify-between rounded-2xl border border-white/15 bg-white/10 px-4 py-3">
                   <span className="text-sm text-indigo-100">Saved Projects</span>
-                  <span className="text-sm font-bold">{projects.length}</span>
+                  <span className="text-sm font-semibold text-white">{projects.length}</span>
                 </div>
 
-                <div className="flex items-center justify-between rounded-2xl bg-white/10 border border-white/10 px-4 py-3">
+                <div className="flex items-center justify-between rounded-2xl border border-white/15 bg-white/10 px-4 py-3 gap-3">
                   <span className="text-sm text-indigo-100">Last Activity</span>
-                  <span className="text-sm font-bold text-right">{latestSaved}</span>
+                  <span className="text-sm font-semibold text-white text-right">{latestSaved}</span>
                 </div>
               </div>
 
               {user?.assignedTemplateId && (
                 <button
                   onClick={() => handleOpenEditor(user.assignedTemplateId)}
-                  className="mt-6 w-full py-3 rounded-2xl bg-white text-indigo-700 font-bold hover:bg-indigo-50 transition"
+                  className="mt-6 w-full py-3 rounded-2xl bg-white text-indigo-700 text-sm font-semibold hover:bg-indigo-50 transition"
                 >
                   Continue Working
                 </button>
               )}
-            </div>
+            </section>
           </div>
         </div>
       </div>
