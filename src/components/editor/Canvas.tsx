@@ -331,23 +331,37 @@ function buildIframeHtml(rawHtml: string, selectedBlockId: string | null, rawCss
   if (editableTargets.length === 0) return;
 
   editableTargets.forEach(function(editableTarget) {
-    if (d.editableType === 'image') {
-      editableTarget.src = d.content;
-    } 
-    else if (d.editableType === 'link') {
-      editableTarget.href = d.content;
-    } 
-    else {
-      var textNodes = Array.from(editableTarget.childNodes).filter(function(n) {
-        return n.nodeType === 3;
-      });
+   if (d.editableType === 'image') {
+  editableTarget.src = d.content;
+} 
+else if (d.editableType === 'link') {
+  editableTarget.href = d.content;
+} 
+else if (d.editableType === 'svg') {
+  // 🔥 REMOVE OLD SVG
+  var oldSvg = editableTarget.querySelector("svg");
+  if (oldSvg) oldSvg.remove();
 
-      if (textNodes.length > 0) {
-        textNodes[0].textContent = d.content;
-      } else {
-        editableTarget.textContent = d.content;
-      }
-    }
+  // 🔥 INSERT NEW SVG
+  var temp = document.createElement("div");
+  temp.innerHTML = d.content.trim();
+
+  var newSvg = temp.querySelector("svg");
+  if (newSvg) {
+    editableTarget.appendChild(newSvg);
+  }
+} 
+else {
+  var textNodes = Array.from(editableTarget.childNodes).filter(function(n) {
+    return n.nodeType === 3;
+  });
+
+  if (textNodes.length > 0) {
+    textNodes[0].textContent = d.content;
+  } else {
+    editableTarget.textContent = d.content;
+  }
+}
   });
 
   document.body.offsetHeight;

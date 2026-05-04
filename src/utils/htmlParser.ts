@@ -164,9 +164,18 @@ function extractEditables(blockEl: Element): EditableItem[] {
       .trim()
       .toLowerCase();
 
-    let type = rawType as "text" | "image" | "link" | "svg";
-    let content = "";
-    const linkHref = el.tagName.toLowerCase() === "a" ? el.getAttribute("href") || "" : undefined;
+let type: EditableItem["type"] = "text";
+let content = "";
+
+if (rawType === "image") type = "image";
+else if (rawType === "link") type = "link";
+else if (rawType === "svg") type = "svg";
+else type = "text";
+
+const linkHref =
+  el.tagName.toLowerCase() === "a"
+    ? el.getAttribute("href") || ""
+    : undefined;
 
     if (type === "image") {
       content = el.getAttribute("src") || (el as HTMLImageElement).src || "";

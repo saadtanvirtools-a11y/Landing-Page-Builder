@@ -338,12 +338,12 @@ function validateHtmlStructure(htmlString: string): ValidationCheck[] {
     blocking: true,
     message: missingType.length === 0 ? "All editable elements have a type ✓" : `${missingType.length} missing data-editable-type`,
     detail:
-      missingType.length > 0
-        ? `Every data-editable must have data-editable-type="text", "image", or "link".`
-        : undefined,
+  missingType.length > 0
+    ? `Every data-editable must have data-editable-type="text", "image", "link", or "svg".`
+    : undefined,
   });
 
-  const validTypes = ["text", "image", "link"];
+ const validTypes = ["text", "image", "link", "svg"];
   const invalidTypes = editables.filter((e) => {
     const t = e.getAttribute("data-editable-type");
     return t && !validTypes.includes(t);
@@ -353,7 +353,7 @@ function validateHtmlStructure(htmlString: string): ValidationCheck[] {
     ok: invalidTypes.length === 0,
     blocking: true,
     message: invalidTypes.length === 0 ? `All types valid ✓` : `Invalid types found`,
-    detail: invalidTypes.length > 0 ? `Allowed: "text", "image", "link".` : undefined,
+    detail: invalidTypes.length > 0 ? `Allowed: "text", "image", "link", "svg".` : undefined,
   });
 
   const styleContent = Array.from(doc.querySelectorAll("style"))

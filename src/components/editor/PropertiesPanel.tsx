@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useEditorStore } from "../../store/editorStore";
 import type { ParsedBlock, Template, EditableItem, PageScripts } from "../../types";
 
@@ -426,6 +426,42 @@ function SvgField({
   );
 }
 
+
+function useDebouncedColorCommit(
+  value: string,
+  commit: (value: string) => void,
+  delay = 80
+) {
+  const [localValue, setLocalValue] = useState(value || "");
+  const latestCommitRef = useRef(commit);
+
+  useEffect(() => {
+    latestCommitRef.current = commit;
+  }, [commit]);
+
+  useEffect(() => {
+    setLocalValue(value || "");
+  }, [value]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (localValue !== value) {
+        latestCommitRef.current(localValue);
+      }
+    }, delay);
+
+    return () => window.clearTimeout(timer);
+  }, [localValue, value, delay]);
+
+  const commitNow = () => {
+    if (localValue !== value) {
+      latestCommitRef.current(localValue);
+    }
+  };
+
+  return { localValue, setLocalValue, commitNow };
+}
+
 function ColorPicker({
   label,
   varName,
@@ -437,7 +473,13 @@ function ColorPicker({
   value: string;
   onChange: (varName: string, val: string) => void;
 }) {
-  const safeValue = value && value.startsWith("#") ? value : "#ffffff";
+  const { localValue, setLocalValue, commitNow } = useDebouncedColorCommit(
+    value || "",
+    (next) => onChange(varName, next),
+    80
+  );
+
+  const safeValue = localValue && localValue.startsWith("#") ? localValue : "#ffffff";
 
   return (
     <div className="flex items-center gap-3 p-3 rounded-2xl bg-slate-50/80 border border-slate-200 hover:border-indigo-200 transition-all">
@@ -445,10 +487,13 @@ function ColorPicker({
         <input
           type="color"
           value={safeValue}
-          onChange={(e) => onChange(varName, e.target.value)}
-          className="absolute inset-0 w-[200%] h-[200%] -top-1/2 -left-1/2 cursor-pointer opacity-0 z-10"
+          onChange={(e) => setLocalValue(e.target.value)}
+          onBlur={commitNow}
+          onMouseUp={commitNow}
+          onTouchEnd={commitNow}
+          className="absolute inset-0 w-full h-full cursor-pointer opacity-0 z-10"
         />
-        <div className="w-full h-full" style={{ background: value || "#ffffff" }} />
+        <div className="w-full h-full" style={{ background: localValue || "#ffffff" }} />
         <div
           className="absolute inset-0 -z-10"
           style={{
@@ -464,8 +509,9 @@ function ColorPicker({
         <p className="text-xs font-semibold text-slate-700 mb-1 capitalize">{label}</p>
         <input
           type="text"
-          value={value || ""}
-          onChange={(e) => onChange(varName, e.target.value)}
+          value={localValue || ""}
+          onChange={(e) => setLocalValue(e.target.value)}
+          onBlur={commitNow}
           placeholder="#ffffff"
           className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-mono text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white"
         />
@@ -500,16 +546,25 @@ function InlineColorPicker({
     return "#ffffff";
   };
 
+  const { localValue, setLocalValue, commitNow } = useDebouncedColorCommit(
+    value || "",
+    onChange,
+    80
+  );
+
   return (
     <div className="flex items-center gap-3 p-3 rounded-2xl bg-slate-50/80 border border-slate-200 hover:border-indigo-200 transition-all">
       <div className="relative w-10 h-10 rounded-xl overflow-hidden border-2 border-white shadow-md shrink-0 cursor-pointer hover:scale-[1.03] transition-transform">
         <input
           type="color"
-          value={toHex(value)}
-          onChange={(e) => onChange(e.target.value)}
-          className="absolute inset-0 w-[200%] h-[200%] -top-1/2 -left-1/2 cursor-pointer opacity-0 z-10"
+          value={toHex(localValue)}
+          onChange={(e) => setLocalValue(e.target.value)}
+          onBlur={commitNow}
+          onMouseUp={commitNow}
+          onTouchEnd={commitNow}
+          className="absolute inset-0 w-full h-full cursor-pointer opacity-0 z-10"
         />
-        <div className="w-full h-full" style={{ background: value || "#ffffff" }} />
+        <div className="w-full h-full" style={{ background: localValue || "#ffffff" }} />
         <div
           className="absolute inset-0 -z-10"
           style={{
@@ -525,8 +580,9 @@ function InlineColorPicker({
         <p className="text-xs font-semibold text-slate-700 mb-1 capitalize">{label}</p>
         <input
           type="text"
-          value={value || ""}
-          onChange={(e) => onChange(e.target.value)}
+          value={localValue || ""}
+          onChange={(e) => setLocalValue(e.target.value)}
+          onBlur={commitNow}
           placeholder="#ffffff"
           className="w-full px-2.5 py-1.5 border border-slate-200 rounded-lg text-xs font-mono text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white"
         />
@@ -742,7 +798,7 @@ function EditableCard({
   const contentIsSvg = isValidSvgMarkup(item.content);
   const isImage = item.type === "image";
   const isLink = item.type === "link";
-  const isSvg = item.type === "svg" || contentIsSvg;
+const isSvg = item.type === "svg";
   const isTextLike = item.type === "text" || item.type === "link";
   const hasEditableUrl = typeof item.linkHref === "string";
 
@@ -1107,9 +1163,9 @@ export default function PropertiesPanel({
   const imageEditables = editables.filter((e) => e.type === "image");
   const linkEditables = editables.filter((e) => e.type === "link");
 
-  const svgEditables = editables.filter(
-    (e) => e.type === "svg" || (e.type === "text" && isValidSvgMarkup(e.content))
-  );
+const svgEditables = editables.filter(
+  (e) => e.type === "svg"
+);
 
   return (
     <div className="w-80 bg-gradient-to-b from-white to-slate-50 border-l border-indigo-100 flex flex-col h-full overflow-hidden">

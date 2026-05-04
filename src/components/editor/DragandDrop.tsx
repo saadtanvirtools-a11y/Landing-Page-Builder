@@ -19,9 +19,32 @@ function isLockedSection(block: any): boolean {
   );
 }
 
-function DropZoneStrip({ id, isActive }: { id: string; isActive: boolean }) {
-  const { setNodeRef, isOver } = useDroppable({ id });
-  const active = isActive || isOver;
+function isFooterSection(block: any): boolean {
+  const blockId = String(block?.blockId || "").toLowerCase();
+  const blockName = String(block?.blockName || "").toLowerCase();
+
+  return blockId.includes("footer") || blockName.includes("footer");
+}
+
+function DropZoneStrip({
+  id,
+  isActive,
+  disabled = false,
+}: {
+  id: string;
+  isActive: boolean;
+  disabled?: boolean;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id,
+    disabled,
+  });
+
+  const active = !disabled && (isActive || isOver);
+
+  if (disabled) {
+    return <div className="py-1 my-1" />;
+  }
 
   return (
     <div
@@ -107,7 +130,7 @@ export default function DragandDrop({
       <div className="px-5 py-4 bg-white border-b border-indigo-100 shrink-0">
         <h2 className="font-semibold text-slate-800 text-sm">Page Sections</h2>
         <p className="text-xs text-slate-400 mt-0.5">
-          Navbar, Hero, Header, and Footer are locked
+          Navbar, Hero, and Footer are fixed
         </p>
       </div>
 
@@ -124,9 +147,11 @@ export default function DragandDrop({
           </div>
         ) : (
           <>
+            {/* disabled: no section before navbar */}
             <DropZoneStrip
               id="drop-before-0"
               isActive={activeDropZone === "drop-before-0"}
+              disabled={true}
             />
 
             {blocks.map((block, idx) => {
@@ -143,6 +168,9 @@ export default function DragandDrop({
                 !locked &&
                 idx < blocks.length - 1 &&
                 !isLockedSection(nextBlock);
+
+              const disableDropAfter =
+                isLockedSection(block) || isFooterSection(nextBlock);
 
               return (
                 <div key={block.blockId}>
@@ -245,9 +273,7 @@ export default function DragandDrop({
                             e.stopPropagation();
 
                             if (locked) {
-                              alert(
-                                "Navbar, Hero, Header, and Footer are locked."
-                              );
+                              alert("Navbar, Hero, and Footer are fixed.");
                               return;
                             }
 
@@ -268,6 +294,7 @@ export default function DragandDrop({
                   <DropZoneStrip
                     id={`drop-after-${idx}`}
                     isActive={activeDropZone === `drop-after-${idx}`}
+                    disabled={disableDropAfter}
                   />
                 </div>
               );
@@ -278,7 +305,7 @@ export default function DragandDrop({
 
       <div className="px-5 py-3 border-t border-indigo-100 bg-white shrink-0">
         <p className="text-xs text-slate-400 text-center">
-          Locked sections cannot be moved
+          Sections can only move between Hero and Footer
         </p>
       </div>
     </aside>

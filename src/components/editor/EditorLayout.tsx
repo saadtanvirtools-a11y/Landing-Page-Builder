@@ -991,10 +991,24 @@ export default function EditorLayout() {
         return;
       }
 
-      if (editable.type !== "image" || !isDataUrl(newContent)) {
-        updateEditable(editableId, newContent);
-        return;
-      }
+    // 🔥 HANDLE SVG SAFELY
+if (editable.type === "svg") {
+  const trimmed = newContent.trim();
+
+  if (!trimmed.startsWith("<svg") || !trimmed.includes("</svg>")) {
+    alert("Invalid SVG code. Please paste a valid <svg>...</svg>.");
+    return;
+  }
+
+  updateEditable(editableId, trimmed);
+  return;
+}
+
+// 🔥 IMAGE HANDLING
+if (editable.type !== "image" || !isDataUrl(newContent)) {
+  updateEditable(editableId, newContent);
+  return;
+}
 
       if (!user?.id) {
         console.error("[EditorLayout] Cannot upload editor image: missing user id");

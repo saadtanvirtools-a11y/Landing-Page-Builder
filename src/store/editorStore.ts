@@ -89,13 +89,6 @@ function readEditableContent(el: Element, type: string): string {
     return extractSvgMarkup(el);
   }
 
-  // ✅ Important:
-  // If a "text" editable contains an inline SVG, return the SVG markup instead of textContent.
-  const nestedSvg = el.querySelector("svg");
-  if (nestedSvg) {
-    return nestedSvg.outerHTML.trim();
-  }
-
   return (el.textContent || "").trim();
 }
 

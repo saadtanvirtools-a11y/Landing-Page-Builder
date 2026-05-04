@@ -351,7 +351,7 @@ export default function DashboardPage() {
               )}
             </section>
 
-            <section className="rounded-[28px] border border-indigo-100 bg-white shadow-sm p-8">
+            {/* <section className="rounded-[28px] border border-indigo-100 bg-white shadow-sm p-8">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-indigo-500">
                   Saved Projects
@@ -436,7 +436,7 @@ export default function DashboardPage() {
                   </p>
                 </div>
               )}
-            </section>
+            </section> */}
           </div>
 
           <div className="space-y-8">
