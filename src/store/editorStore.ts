@@ -355,6 +355,8 @@ interface EditorState {
   isSaving: boolean;
 
   updatePageSettings: (data: Partial<PageScripts>) => void;
+  updatePageScripts: (scripts: PageScripts) => void; // ✅ NEW
+  updateRawCss: (rawCss: string) => void; // ✅ NEW: update marquee/CSS animation code
   loadTemplate: (template: Template) => void;
   selectBlock: (blockId: string | null) => void;
   addBlockToTemplate: (block: ParsedBlock, insertAfterIndex?: number) => void;
@@ -382,7 +384,8 @@ const DEFAULT_SCRIPTS: PageScripts = {
   faviconUrl: "",
   metaDescription: "",
   googleAnalyticsId: "",
-};
+  hasMarquee: false,
+} as PageScripts;
 
 // ─────────────────────────────────────────────────────────────
 // STORE
@@ -402,6 +405,43 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         ...state.pageScripts,
         ...data,
       },
+      currentTemplate: state.currentTemplate
+        ? {
+            ...state.currentTemplate,
+            pageScripts: {
+              ...(state.currentTemplate.pageScripts ?? {}),
+              ...state.pageScripts,
+              ...data,
+            },
+          }
+        : null,
+    })),
+
+  updatePageScripts: (scripts) =>
+    set((state) => ({
+      pageScripts: {
+        ...state.pageScripts,
+        ...scripts,
+      },
+      currentTemplate: state.currentTemplate
+        ? {
+            ...state.currentTemplate,
+            pageScripts: {
+              ...(state.currentTemplate.pageScripts ?? {}),
+              ...scripts,
+            },
+          }
+        : null,
+    })),
+
+  updateRawCss: (rawCss) =>
+    set((state) => ({
+      currentTemplate: state.currentTemplate
+        ? {
+            ...state.currentTemplate,
+            rawCss,
+          }
+        : null,
     })),
 
   loadTemplate: (template) => {
@@ -676,70 +716,88 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       };
     }),
 
-  updateClassSwap: (editableId, newClassList) => {
-    const { currentTemplate } = get();
-    if (!currentTemplate) return;
+updateClassSwap: (editableId, newClassList) => {
+  const { currentTemplate } = get();
+  if (!currentTemplate) return;
 
-    const RESPONSIVE_RE = /\b(?:sm|md|lg|xl|2xl):[\w/-]+\b/g;
-    const cleanClassList = newClassList.replace(RESPONSIVE_RE, "").replace(/\s+/g, " ").trim();
+  const RESPONSIVE_RE = /\b(?:sm|md|lg|xl|2xl):[\w/-]+\b/g;
+  const cleanClassList = newClassList
+    .replace(RESPONSIVE_RE, "")
+    .replace(/\s+/g, " ")
+    .trim();
 
-    let block = currentTemplate.blocks.find((b) => b.editables.some((e) => e.id === editableId));
-    let editable = block?.editables.find((e) => e.id === editableId);
+  let targetBlock = currentTemplate.blocks.find((b) =>
+    b.editables.some((e) => e.id === editableId)
+  );
 
-    if (!block || !editable) {
-      block = currentTemplate.blocks.find((b) => b.editables.some((e) => e.styleId === editableId));
-      editable = block?.editables.find((e) => e.styleId === editableId);
+  let targetEditable = targetBlock?.editables.find((e) => e.id === editableId);
+
+  if (!targetBlock || !targetEditable) {
+    targetBlock = currentTemplate.blocks.find((b) =>
+      b.editables.some((e) => e.styleId === editableId)
+    );
+    targetEditable = targetBlock?.editables.find((e) => e.styleId === editableId);
+  }
+
+  if (!targetBlock || !targetEditable) return;
+
+  const targetStyleId = targetEditable.styleId || "";
+  const parser = new DOMParser();
+
+  const updatedBlocks = currentTemplate.blocks.map((block) => {
+    if (block.blockId !== targetBlock!.blockId) return block;
+
+    const blockDoc = parser.parseFromString(block.rawHtml ?? "", "text/html");
+
+    const targets = targetStyleId
+      ? Array.from(blockDoc.querySelectorAll(`[data-style-id="${targetStyleId}"]`))
+      : [];
+
+    if (targets.length === 0) {
+      const fallback = blockDoc.querySelector(`[data-editable="${targetEditable!.id}"]`);
+      if (fallback) targets.push(fallback);
     }
 
-    if (!block || !editable) return;
+    targets.forEach((targetEl) => {
+      const styleChildSelector = (targetEditable as any).styleChildSelector;
 
-    const parser = new DOMParser();
-
-    const updatedBlocks = currentTemplate.blocks.map((b) => {
-      if (b.blockId !== block!.blockId) return b;
-
-      const blockDoc = parser.parseFromString(b.rawHtml ?? "", "text/html");
-      let targetEl: Element | null = null;
-
-      if (editable!.styleId) {
-        targetEl = blockDoc.querySelector(`[data-style-id="${editable!.styleId}"]`);
-      }
-
-      if (!targetEl) {
-        targetEl = blockDoc.querySelector(`[data-editable="${editable!.id}"]`);
-      }
-
-      if (targetEl) {
-        const styleChildSelector = (editable as any).styleChildSelector;
-        if (styleChildSelector) {
-          const childEl = targetEl.querySelector(styleChildSelector);
-          if (childEl) childEl.className = cleanClassList;
-          else (targetEl as HTMLElement).className = cleanClassList;
+      if (styleChildSelector) {
+        const childEl = targetEl.querySelector(styleChildSelector);
+        if (childEl) {
+          (childEl as HTMLElement).className = cleanClassList;
         } else {
           (targetEl as HTMLElement).className = cleanClassList;
         }
+      } else {
+        (targetEl as HTMLElement).className = cleanClassList;
       }
-
-      return {
-        ...b,
-        rawHtml: "<!DOCTYPE html>\n" + blockDoc.documentElement.outerHTML,
-        editables: b.editables.map((e) =>
-          e.id === editable!.id ? { ...e, tailwindClass: cleanClassList } : e
-        ),
-      };
     });
 
-    const rebuiltHtml = rebuildRawHtml(updatedBlocks, currentTemplate.rawHtml);
-    const finalHtml = injectCssVarsIntoHtml(rebuiltHtml, currentTemplate.cssVariables ?? {});
+    return {
+      ...block,
+      rawHtml: "<!DOCTYPE html>\n" + blockDoc.documentElement.outerHTML,
+      editables: block.editables.map((e) =>
+        e.id === targetEditable!.id || (targetStyleId && e.styleId === targetStyleId)
+          ? { ...e, tailwindClass: cleanClassList }
+          : e
+      ),
+    };
+  });
 
-    set({
-      currentTemplate: {
-        ...currentTemplate,
-        blocks: updatedBlocks,
-        rawHtml: finalHtml,
-      },
-    });
-  },
+  const rebuiltHtml = rebuildRawHtml(updatedBlocks, currentTemplate.rawHtml);
+  const finalHtml = injectCssVarsIntoHtml(
+    rebuiltHtml,
+    currentTemplate.cssVariables ?? {}
+  );
+
+  set({
+    currentTemplate: {
+      ...currentTemplate,
+      blocks: updatedBlocks,
+      rawHtml: finalHtml,
+    },
+  });
+},
 
   updateBlockStyle: (blockId, styleKey, value) => {
     const { currentTemplate } = get();

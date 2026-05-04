@@ -4,10 +4,11 @@ import JSZip from "jszip";
 import { useAuthStore } from "../../store/authStore";
 import { useEditorStore } from "../../store/editorStore";
 import BlockPanel from "../../components/editor/BlockPanel";
+import DragandDrop from "../../components/editor/DragandDrop";
 import Canvas from "../../components/editor/Canvas";
 import PropertiesPanel from "../../components/editor/PropertiesPanel";
 import { db } from "../../firebase";
-import { collection, getDocs, doc, getDoc } from "firebase/firestore";
+import { collection, getDocs } from "firebase/firestore";
 import {
   DndContext,
   DragOverlay,
@@ -29,9 +30,6 @@ import {
 import type { Template, StandaloneBlock, EditableItem } from "../../types";
 import { uploadEditorImage } from "../../api/supabaseStorage";
 
-// ─────────────────────────────────────────────────────────────
-// HELPERS
-// ─────────────────────────────────────────────────────────────
 async function dataUrlToFile(dataUrl: string, fileName: string): Promise<File> {
   const res = await fetch(dataUrl);
   const blob = await res.blob();
@@ -68,16 +66,20 @@ function getFileBaseNameFromUrl(url: string): string {
     const raw = pathname.split("/").pop() || "asset";
     const withoutQuery = raw.split("?")[0].split("#")[0];
     const lastDot = withoutQuery.lastIndexOf(".");
+
     if (lastDot > 0) {
       return sanitizeFileName(withoutQuery.slice(0, lastDot)) || "asset";
     }
+
     return sanitizeFileName(withoutQuery) || "asset";
   } catch {
     const clean = url.split("/").pop()?.split("?")[0]?.split("#")[0] || "asset";
     const lastDot = clean.lastIndexOf(".");
+
     if (lastDot > 0) {
       return sanitizeFileName(clean.slice(0, lastDot)) || "asset";
     }
+
     return sanitizeFileName(clean) || "asset";
   }
 }
@@ -137,9 +139,11 @@ async function blobFromAnyUrl(url: string): Promise<Blob> {
   }
 
   const res = await fetch(url);
+
   if (!res.ok) {
     throw new Error(`Failed to fetch asset: ${res.status} ${res.statusText}`);
   }
+
   return await res.blob();
 }
 
@@ -188,6 +192,7 @@ async function localizeAsset(
   const blob = await blobFromAnyUrl(url);
   const ext = getExtensionFromUrlOrType(url, blob.type);
   const base = getFileBaseNameFromUrl(url);
+
   let fileName = `${base}.${ext}`;
   let counter = 1;
 
@@ -205,9 +210,26 @@ async function localizeAsset(
   return localPath;
 }
 
-// ─────────────────────────────────────────────────────────────
-// Drag overlay card
-// ─────────────────────────────────────────────────────────────
+function formatExportTimestamp(date = new Date()): string {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const min = String(date.getMinutes()).padStart(2, "0");
+  const ss = String(date.getSeconds()).padStart(2, "0");
+
+  return `${yyyy}-${mm}-${dd}-${hh}-${min}-${ss}`;
+}
+
+function buildExportFileName(pageTitle?: string, templateName?: string): string {
+  const baseName =
+    sanitizeFileName(pageTitle || "") ||
+    sanitizeFileName(templateName || "") ||
+    "export";
+
+  return `${baseName}-${formatExportTimestamp()}.zip`;
+}
+
 function DragOverlayCard({
   option,
   standaloneBlock,
@@ -218,8 +240,12 @@ function DragOverlayCard({
   if (option) {
     return (
       <div className="w-48 rounded-xl border-2 border-indigo-500 bg-white shadow-2xl px-3 py-2.5 rotate-1 opacity-95 pointer-events-none">
-        <div className="text-xs font-bold text-indigo-600 truncate">{option.variantLabel}</div>
-        <div className="text-xs text-gray-400 truncate mt-0.5">{option.sourceTemplateName}</div>
+        <div className="text-xs font-bold text-indigo-600 truncate">
+          {option.variantLabel}
+        </div>
+        <div className="text-xs text-gray-400 truncate mt-0.5">
+          {option.sourceTemplateName}
+        </div>
         <div className="mt-2 text-center text-lg">➕</div>
       </div>
     );
@@ -228,8 +254,12 @@ function DragOverlayCard({
   if (standaloneBlock) {
     return (
       <div className="w-48 rounded-xl border-2 border-green-500 bg-white shadow-2xl px-3 py-2.5 rotate-1 opacity-95 pointer-events-none">
-        <div className="text-xs font-bold text-green-600 truncate">{standaloneBlock.blockName}</div>
-        <div className="text-xs text-gray-400 truncate mt-0.5">🧩 Standalone block</div>
+        <div className="text-xs font-bold text-green-600 truncate">
+          {standaloneBlock.blockName}
+        </div>
+        <div className="text-xs text-gray-400 truncate mt-0.5">
+          🧩 Standalone block
+        </div>
         <div className="mt-2 text-center text-lg">➕</div>
       </div>
     );
@@ -238,9 +268,6 @@ function DragOverlayCard({
   return null;
 }
 
-// ─────────────────────────────────────────────────────────────
-// Convert StandaloneBlock → ParsedBlock for addBlockToTemplate
-// ─────────────────────────────────────────────────────────────
 function standaloneToParseBlock(block: StandaloneBlock) {
   return {
     blockId: block.blockType,
@@ -270,15 +297,12 @@ const BLOCK_LABELS: Record<string, string> = {
   "how-it-works": "How It Works",
 };
 
-// ─────────────────────────────────────────────────────────────
-// Build grouped blocks from Firestore templates
-// ─────────────────────────────────────────────────────────────
 function buildGroupedBlocksFromTemplates(
   templates: Template[],
-  assignedTemplateId: string | null
+  activeTemplateId: string | null
 ): Record<string, BlockOption[]> {
-  const filtered = assignedTemplateId
-    ? templates.filter((t) => t.id === assignedTemplateId)
+  const filtered = activeTemplateId
+    ? templates.filter((t) => t.id === activeTemplateId)
     : templates;
 
   const groups: Record<string, BlockOption[]> = {};
@@ -287,6 +311,7 @@ function buildGroupedBlocksFromTemplates(
   filtered.forEach((template) => {
     template.blocks.forEach((block) => {
       if (!groups[block.blockId]) groups[block.blockId] = [];
+
       countPerType[block.blockId] = (countPerType[block.blockId] || 0) + 1;
 
       const label = BLOCK_LABELS[block.blockId] ?? block.blockId;
@@ -304,14 +329,9 @@ function buildGroupedBlocksFromTemplates(
   return groups;
 }
 
-// ─────────────────────────────────────────────────────────────
-// Main Component
-// ─────────────────────────────────────────────────────────────
 export default function EditorLayout() {
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
-
-  const assignedTemplateId = user?.assignedTemplateId ?? null;
 
   const {
     lastSaved,
@@ -321,8 +341,6 @@ export default function EditorLayout() {
     selectedBlockId,
     pageScripts,
     saveToStorage,
-    loadFromStorage,
-    loadTemplate,
     resetEditor,
     addBlockToTemplate,
     updateEditable,
@@ -331,6 +349,8 @@ export default function EditorLayout() {
     updateBlockStyle,
     updatePageSettings,
   } = useEditorStore();
+
+  const activeTemplateId = currentTemplate?.id ?? null;
 
   const [draggingOption, setDraggingOption] = useState<BlockOption | null>(null);
   const [draggingStandalone, setDraggingStandalone] = useState<StandaloneBlock | null>(null);
@@ -347,20 +367,6 @@ export default function EditorLayout() {
     activeDropZoneRef.current = id;
     setActiveDropZone(id);
   }, []);
-
-  const lastPointerPos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-
-  useEffect(() => {
-    const onMove = (e: PointerEvent) => {
-      lastPointerPos.current = { x: e.clientX, y: e.clientY };
-    };
-    window.addEventListener("pointermove", onMove);
-    return () => window.removeEventListener("pointermove", onMove);
-  }, []);
-
-  useEffect(() => {
-    if (user?.id) loadFromStorage(user.id);
-  }, [user?.id, loadFromStorage]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -380,67 +386,9 @@ export default function EditorLayout() {
     fetchData();
   }, []);
 
-  useEffect(() => {
-    if (!assignedTemplateId) return;
-    if (currentTemplate?.id === assignedTemplateId) return;
-
-    getDoc(doc(db, "templates", assignedTemplateId))
-      .then((snap) => {
-        if (snap.exists()) {
-          loadTemplate(snap.data() as Template);
-        } else {
-          console.warn("[EditorLayout] Assigned template not found in Firestore:", assignedTemplateId);
-        }
-      })
-      .catch((err) => console.error("[EditorLayout] Failed to load assigned template:", err));
-  }, [assignedTemplateId, currentTemplate?.id, loadTemplate]);
-
-  // ─────────────────────────────────────────────────────────────
-  // LIVE PAGE SETTINGS (Title, Meta, Favicon)
-  // ─────────────────────────────────────────────────────────────
-  // useEffect(() => {
-  //   if (!pageScripts) return;
-
-  //   document.title =
-  //     pageScripts.pageTitle?.trim() || templateName || "Landing Page Builder";
-
-  //   let metaDescription = document.querySelector(
-  //     'meta[name="description"]'
-  //   ) as HTMLMetaElement | null;
-
-  //   if (!metaDescription) {
-  //     metaDescription = document.createElement("meta");
-  //     metaDescription.setAttribute("name", "description");
-  //     document.head.appendChild(metaDescription);
-  //   }
-
-  //   metaDescription.setAttribute(
-  //     "content",
-  //     pageScripts.metaDescription?.trim() || ""
-  //   );
-
-  //   let favicon = document.querySelector(
-  //     'link[rel="icon"]'
-  //   ) as HTMLLinkElement | null;
-
-  //   if (!favicon) {
-  //     favicon = document.createElement("link");
-  //     favicon.setAttribute("rel", "icon");
-  //     document.head.appendChild(favicon);
-  //   }
-
-  //   if (pageScripts.faviconUrl?.trim()) {
-  //     const url = pageScripts.faviconUrl.trim();
-  //     const ext = getExtensionFromUrlOrType(url);
-  //     favicon.setAttribute("type", getMimeTypeFromExt(ext));
-  //     favicon.setAttribute("href", url);
-  //   } else {
-  //     favicon.removeAttribute("href");
-  //     favicon.removeAttribute("type");
-  //   }
-  // }, [pageScripts, templateName]);
-
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
 
   const canvasBlockIds = useMemo(
     () =>
@@ -457,9 +405,11 @@ export default function EditorLayout() {
       const id = String(e.active.id);
 
       if (isPanelDrag(id)) {
-        const groups = buildGroupedBlocksFromTemplates(firestoreTemplates, assignedTemplateId);
+        const groups = buildGroupedBlocksFromTemplates(firestoreTemplates, activeTemplateId);
         const { blockId, sourceTemplateId } = parseDragId(id);
-        const found = (groups[blockId] || []).find((o) => o.sourceTemplateId === sourceTemplateId);
+        const found = (groups[blockId] || []).find(
+          (o) => o.sourceTemplateId === sourceTemplateId
+        );
 
         setDraggingOption(found ?? null);
         setDraggingStandalone(null);
@@ -476,13 +426,16 @@ export default function EditorLayout() {
         updateDropZone(null);
       }
     },
-    [updateDropZone, assignedTemplateId, firestoreTemplates, firestoreStandaloneBlocks]
+    [updateDropZone, activeTemplateId, firestoreTemplates, firestoreStandaloneBlocks]
   );
 
   const handleDragOver = useCallback(
     (e: DragOverEvent) => {
       const overId = e.over?.id ? String(e.over.id) : null;
-      if (overId !== activeDropZoneRef.current) updateDropZone(overId);
+
+      if (overId !== activeDropZoneRef.current) {
+        updateDropZone(overId);
+      }
     },
     [updateDropZone]
   );
@@ -511,8 +464,10 @@ export default function EditorLayout() {
 
       if (isPanelDrag(activeId)) {
         const { blockId, sourceTemplateId } = parseDragId(activeId);
-        const groups = buildGroupedBlocksFromTemplates(firestoreTemplates, assignedTemplateId);
-        const option = (groups[blockId] || []).find((o) => o.sourceTemplateId === sourceTemplateId);
+        const groups = buildGroupedBlocksFromTemplates(firestoreTemplates, activeTemplateId);
+        const option = (groups[blockId] || []).find(
+          (o) => o.sourceTemplateId === sourceTemplateId
+        );
 
         if (!option) {
           console.error("[DragEnd] ❌ Template block not found:", blockId);
@@ -540,12 +495,14 @@ export default function EditorLayout() {
         doAdd(standaloneToParseBlock(found));
       }
     },
-    [addBlockToTemplate, updateDropZone, assignedTemplateId, firestoreTemplates, firestoreStandaloneBlocks]
+    [addBlockToTemplate, updateDropZone, activeTemplateId, firestoreTemplates, firestoreStandaloneBlocks]
   );
 
   useEffect(() => {
     if (!user) return;
+
     const t = setInterval(() => saveToStorage(user.id), 30_000);
+
     return () => clearInterval(t);
   }, [user, saveToStorage]);
 
@@ -554,12 +511,15 @@ export default function EditorLayout() {
   };
 
   const handleReset = () => {
-    if (confirm("Reset canvas? All unsaved changes will be lost.")) resetEditor();
+    if (confirm("Reset canvas? All unsaved changes will be lost.")) {
+      resetEditor();
+    }
   };
 
   const handleBackToDashboard = () => {
     const shouldLeave = confirm("Go back to dashboard? Make sure your changes are saved.");
     if (!shouldLeave) return;
+
     navigate("/dashboard");
   };
 
@@ -591,7 +551,13 @@ export default function EditorLayout() {
   };
 
   const buildExportZip = async (template: Template): Promise<Blob> => {
-    const EDITOR_ATTRS = [
+    const zip = new JSZip();
+    const parser = new DOMParser();
+    const doc2 = parser.parseFromString(template.rawHtml, "text/html");
+    const assetMap = new Map<string, string>();
+    const usedNames = new Set<string>();
+
+    const editorAttrs = [
       "data-editable",
       "data-editable-type",
       "data-style-id",
@@ -605,18 +571,13 @@ export default function EditorLayout() {
       "data-block-item",
     ];
 
-    const zip = new JSZip();
-    const parser = new DOMParser();
-    const doc2 = parser.parseFromString(template.rawHtml, "text/html");
-    const assetMap = new Map<string, string>();
-    const usedNames = new Set<string>();
-
-    EDITOR_ATTRS.forEach((attr) => {
+    editorAttrs.forEach((attr) => {
       doc2.querySelectorAll(`[${attr}]`).forEach((el) => el.removeAttribute(attr));
     });
 
     doc2.querySelectorAll("[data-tpl-styles]").forEach((el) => {
       const parent = el.parentElement;
+
       if (parent) {
         Array.from(el.children).forEach((child) => parent.insertBefore(child, el));
         el.remove();
@@ -624,6 +585,7 @@ export default function EditorLayout() {
     });
 
     const head = doc2.head || doc2.createElement("head");
+
     if (!doc2.head) {
       const htmlEl = doc2.documentElement || doc2.createElement("html");
       htmlEl.prepend(head);
@@ -631,14 +593,17 @@ export default function EditorLayout() {
     }
 
     let titleEl = head.querySelector("title");
+
     if (!titleEl) {
       titleEl = doc2.createElement("title");
       head.prepend(titleEl);
     }
+
     titleEl.textContent = pageScripts.pageTitle?.trim() || template.templateName || "Exported Page";
 
     const existingMetaDescription = head.querySelector('meta[name="description"]');
     if (existingMetaDescription) existingMetaDescription.remove();
+
     if (pageScripts.metaDescription?.trim()) {
       const metaDescription = doc2.createElement("meta");
       metaDescription.setAttribute("name", "description");
@@ -683,9 +648,11 @@ export default function EditorLayout() {
     }
 
     const imageEls = Array.from(doc2.querySelectorAll("img[src], source[src]"));
+
     for (const el of imageEls) {
       const attr = el.tagName.toLowerCase() === "source" ? "src" : "src";
       const src = el.getAttribute(attr) || "";
+
       if (!isExportableAssetUrl(src)) continue;
 
       try {
@@ -697,6 +664,7 @@ export default function EditorLayout() {
     }
 
     const elementsWithStyle = Array.from(doc2.querySelectorAll<HTMLElement>("[style]"));
+
     for (const el of elementsWithStyle) {
       const styleValue = el.getAttribute("style") || "";
       const urls = extractUrlsFromCss(styleValue);
@@ -704,6 +672,7 @@ export default function EditorLayout() {
       if (urls.length === 0) continue;
 
       const replacements: Record<string, string> = {};
+
       for (const url of urls) {
         try {
           replacements[url] = await localizeAsset(url, zip, assetMap, usedNames);
@@ -724,6 +693,7 @@ export default function EditorLayout() {
 
       if (urls.length > 0) {
         const replacements: Record<string, string> = {};
+
         for (const url of urls) {
           try {
             replacements[url] = await localizeAsset(url, zip, assetMap, usedNames);
@@ -731,6 +701,7 @@ export default function EditorLayout() {
             console.error("[Export] Failed to localize CSS asset:", url, err);
           }
         }
+
         cssText = replaceUrlsInCss(cssText, replacements);
       }
 
@@ -755,16 +726,22 @@ export default function EditorLayout() {
 
     for (const script of inlineScripts) {
       const jsText = script.textContent?.trim() || "";
+
       if (jsText) {
         combinedJs += (combinedJs ? "\n\n" : "") + jsText;
       }
+
       script.remove();
     }
 
     if (!doc2.body) {
       const htmlEl = doc2.documentElement;
       const body = doc2.createElement("body");
-      while (htmlEl.firstChild) body.appendChild(htmlEl.firstChild);
+
+      while (htmlEl.firstChild) {
+        body.appendChild(htmlEl.firstChild);
+      }
+
       htmlEl.appendChild(body);
     }
 
@@ -789,6 +766,7 @@ export default function EditorLayout() {
 
     const exportMainJs = doc2.createElement("script");
     exportMainJs.setAttribute("src", "public/main.js");
+
     if (doc2.body) {
       doc2.body.appendChild(exportMainJs);
     } else {
@@ -806,16 +784,21 @@ export default function EditorLayout() {
     if (!currentTemplate) return;
 
     try {
-      const zipBlob = await buildExportZip(currentTemplate);
+      const latestState = useEditorStore.getState();
+      const latestTemplate = latestState.currentTemplate || currentTemplate;
+      const latestPageScripts = latestState.pageScripts || pageScripts;
+
+      const zipBlob = await buildExportZip(latestTemplate);
       const url = URL.createObjectURL(zipBlob);
       const a = document.createElement("a");
-      const fileName = (currentTemplate.templateName || "export")
-        .toLowerCase()
-        .replace(/\s+/g, "-")
-        .replace(/[^a-z0-9-]/g, "");
+
+      const exportFileName = buildExportFileName(
+        latestPageScripts?.pageTitle?.trim(),
+        latestTemplate?.templateName
+      );
 
       a.href = url;
-      a.download = `${fileName}.zip`;
+      a.download = exportFileName;
 
       document.body.appendChild(a);
       a.click();
@@ -835,14 +818,20 @@ export default function EditorLayout() {
       if (!currentTemplate) return "#ffffff";
 
       const fromStore = currentTemplate.cssVariables?.[varName];
-      if (fromStore && fromStore.trim() !== "") return fromStore.trim();
+
+      if (fromStore && fromStore.trim() !== "") {
+        return fromStore.trim();
+      }
 
       if (currentTemplate.rawHtml) {
         const escaped = varName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const match = currentTemplate.rawHtml.match(
           new RegExp(escaped + "\\s*:\\s*([^;\\n\\r}]+)")
         );
-        if (match?.[1]?.trim()) return match[1].trim();
+
+        if (match?.[1]?.trim()) {
+          return match[1].trim();
+        }
       }
 
       return "#ffffff";
@@ -869,7 +858,10 @@ export default function EditorLayout() {
     async (editableId: string, newContent: string) => {
       if (!currentTemplate) return;
 
-      const allEditables: EditableItem[] = currentTemplate.blocks.flatMap((b) => b.editables || []);
+      const allEditables: EditableItem[] = currentTemplate.blocks.flatMap(
+        (b) => b.editables || []
+      );
+
       const editable = allEditables.find((e) => e.id === editableId);
 
       if (!editable) {
@@ -901,7 +893,6 @@ export default function EditorLayout() {
         });
 
         updateEditable(editableId, uploaded.url);
-        console.log("[EditorLayout] ✅ Editor image uploaded:", uploaded.url);
       } catch (err) {
         console.error("[EditorLayout] Failed to upload editor image:", err);
         alert("Image upload failed. Please try again.");
@@ -942,6 +933,7 @@ export default function EditorLayout() {
               >
                 <path d="M19 12H5M12 5l-7 7 7 7" />
               </svg>
+
               <span className="hidden sm:inline">Back to Dashboard</span>
             </button>
 
@@ -955,9 +947,12 @@ export default function EditorLayout() {
               <h1 className="font-bold text-gray-800 text-sm leading-none truncate max-w-xs">
                 {templateName ?? "Landing Page Builder"}
               </h1>
+
               <p className="text-xs text-gray-400 mt-0.5">
                 {currentTemplate
-                  ? `${currentTemplate.blocks.length} section${currentTemplate.blocks.length !== 1 ? "s" : ""}`
+                  ? `${currentTemplate.blocks.length} section${
+                      currentTemplate.blocks.length !== 1 ? "s" : ""
+                    }`
                   : "Drag blocks from the left panel to start"}
               </p>
             </div>
@@ -986,10 +981,6 @@ export default function EditorLayout() {
               disabled={!hasBlocks}
               className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
               Preview
             </button>
 
@@ -998,46 +989,28 @@ export default function EditorLayout() {
               disabled={isSaving || isUploadingEditorImage}
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                <polyline points="17 21 17 13 7 13 7 21" />
-                <polyline points="7 3 7 8 15 8" />
-              </svg>
               {isSaving ? "Saving..." : "Save"}
             </button>
 
             <button
               onClick={handleExport}
               disabled={!hasBlocks || !currentTemplate}
-              className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold rounded-lg transition-all duration-200 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed
-                ${
-                  exported
-                    ? "bg-emerald-500 text-white"
-                    : "bg-gradient-to-r from-indigo-600 to-violet-600 text-white hover:from-indigo-700 hover:to-violet-700"
-                }`}
+              className={`flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold rounded-lg transition-all duration-200 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed ${
+                exported
+                  ? "bg-emerald-500 text-white"
+                  : "bg-gradient-to-r from-indigo-600 to-violet-600 text-white hover:from-indigo-700 hover:to-violet-700"
+              }`}
             >
-              {exported ? (
-                <>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                  Exported!
-                </>
-              ) : (
-                <>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                  Export ZIP
-                </>
-              )}
+              {exported ? "Exported!" : "Export ZIP"}
             </button>
 
             <div className="flex items-center gap-2 ml-1 pl-2 border-l border-gray-100">
               <span className="text-xs text-gray-500 hidden sm:inline">{user?.name}</span>
-              <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-red-500 transition">
+
+              <button
+                onClick={handleLogout}
+                className="text-xs text-gray-400 hover:text-red-500 transition"
+              >
                 Logout
               </button>
             </div>
@@ -1048,10 +1021,14 @@ export default function EditorLayout() {
           <BlockPanel
             draggingOption={draggingOption}
             canvasBlockIds={canvasBlockIds}
-            assignedTemplateId={assignedTemplateId}
           />
 
-          <Canvas draggingOption={draggingOption} activeDropZone={activeDropZone} />
+          <DragandDrop activeDropZone={activeDropZone} />
+
+          <Canvas
+            draggingOption={draggingOption}
+            activeDropZone={activeDropZone}
+          />
 
           <PropertiesPanel
             selectedBlock={selectedBlock}
@@ -1068,7 +1045,10 @@ export default function EditorLayout() {
       </div>
 
       <DragOverlay modifiers={[restrictToWindowEdges]}>
-        <DragOverlayCard option={draggingOption} standaloneBlock={draggingStandalone} />
+        <DragOverlayCard
+          option={draggingOption}
+          standaloneBlock={draggingStandalone}
+        />
       </DragOverlay>
     </DndContext>
   );

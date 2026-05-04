@@ -200,60 +200,46 @@ function extractCustomCssOnly(css: string): string {
     css.includes("@layer utilities") ||
     css.includes("@layer components");
 
-  if (!isTailwindOutput) {
-    console.log("[extractCustomCssOnly] Not Tailwind output — keeping full CSS");
-    return css;
-  }
+  if (!isTailwindOutput) return css;
 
-  console.log(`[extractCustomCssOnly] Tailwind detected — extracting custom rules only`);
   const kept: string[] = [];
 
-  const rootRegex = /:root\s*\{([^}]+)\}/g;
+  const rootRegex = /:root\s*\{[^}]+\}/g;
   let m: RegExpExecArray | null;
-  while ((m = rootRegex.exec(css)) !== null) {
-    kept.push(`:root {\n${m[1]}\n}`);
-  }
-
-  const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
-  let i = 0;
-  while (i < cssWithoutComments.length) {
-    const openBrace = cssWithoutComments.indexOf("{", i);
-    if (openBrace === -1) break;
-
-    let depth = 1;
-    let j = openBrace + 1;
-    while (j < cssWithoutComments.length && depth > 0) {
-      if (cssWithoutComments[j] === "{") depth++;
-      else if (cssWithoutComments[j] === "}") depth--;
-      j++;
-    }
-
-    const closeBrace = j - 1;
-    const block = cssWithoutComments.slice(openBrace + 1, closeBrace);
-    const selector = cssWithoutComments.slice(i, openBrace).trim();
-
-    if (block.includes("data:image/") || block.includes("data:font/")) {
-      const rule = `${selector} {\n${block.trim()}\n}`;
-      if (!kept.some((k) => k.trim() === rule.trim())) {
-        kept.push(rule);
-      }
-    }
-
-    i = closeBrace + 1;
-  }
+  while ((m = rootRegex.exec(css)) !== null) kept.push(m[0]);
 
   const fontFaceRegex = /@font-face\s*\{[^}]+\}/g;
-  while ((m = fontFaceRegex.exec(css)) !== null) {
-    kept.push(m[0]);
+  while ((m = fontFaceRegex.exec(css)) !== null) kept.push(m[0]);
+
+  const keyframesRegex = /@keyframes\s+[^{]+\{[\s\S]*?\n\}/g;
+  while ((m = keyframesRegex.exec(css)) !== null) {
+    const block = m[0];
+    if (
+      block.toLowerCase().includes("marquee") ||
+      block.toLowerCase().includes("translatex")
+    ) {
+      kept.push(block);
+    }
   }
 
-  const result = kept.join("\n\n").trim();
-  console.log(
-    `[extractCustomCssOnly] ${(css.length / 1024).toFixed(1)}KB → ${(result.length / 1024).toFixed(1)}KB`,
-    `| ${kept.length} rule(s) kept`
-  );
+  const ruleRegex = /([^{}@]+)\{([^{}]+)\}/g;
+  while ((m = ruleRegex.exec(css)) !== null) {
+    const selector = m[1].trim();
+    const body = m[2].trim();
+    const combined = `${selector} ${body}`.toLowerCase();
 
-  return result;
+    if (
+      combined.includes("marquee") ||
+      combined.includes("animation") ||
+      combined.includes("translatex") ||
+      combined.includes("data:image/") ||
+      combined.includes("data:font/")
+    ) {
+      kept.push(`${selector} {\n${body}\n}`);
+    }
+  }
+
+  return [...new Set(kept)].join("\n\n").trim();
 }
 
 function hashString(str: string): string {
@@ -531,15 +517,16 @@ function buildFirestoreSafeTemplate(template: any) {
         styleChildSelector: editable.styleChildSelector || "",
       })),
     })),
-    pageScripts: {
-      gtmId: template.pageScripts?.gtmId || "",
-      headScripts: template.pageScripts?.headScripts || "",
-      bodyScripts: template.pageScripts?.bodyScripts || "",
-      pageTitle: template.pageScripts?.pageTitle || "",
-      faviconUrl: template.pageScripts?.faviconUrl || "",
-      metaDescription: template.pageScripts?.metaDescription || "",
-      googleAnalyticsId: template.pageScripts?.googleAnalyticsId || "",
-    },
+ pageScripts: {
+  gtmId: template.pageScripts?.gtmId || "",
+  headScripts: template.pageScripts?.headScripts || "",
+  bodyScripts: template.pageScripts?.bodyScripts || "",
+  pageTitle: template.pageScripts?.pageTitle || "",
+  faviconUrl: template.pageScripts?.faviconUrl || "",
+  metaDescription: template.pageScripts?.metaDescription || "",
+  googleAnalyticsId: template.pageScripts?.googleAnalyticsId || "",
+  hasMarquee: template.pageScripts?.hasMarquee || false, // 🔥 NEW
+},
   });
 }
 
@@ -715,12 +702,13 @@ export default function TemplateUpload({ onUploaded }: Props) {
 
       setUploadState({ status: "uploading", message: "Parsing HTML structure...", progress: 70 });
 
-      const parsedTemplate = parseHtmlToTemplate({
-        htmlString,
-        templateId,
-        templateName: templateName.trim(),
-        category,
-      });
+const parsedTemplate = parseHtmlToTemplate({
+  htmlString,
+  templateId,
+  templateName: templateName.trim(),
+  category,
+  rawJs: jsString || "", // 🔥 IMPORTANT FIX
+});
 
       const templateWithAssets = buildFirestoreSafeTemplate({
         ...parsedTemplate,

@@ -41,6 +41,9 @@ export interface PageScripts {
   faviconUrl: string;
   metaDescription: string;
   googleAnalyticsId: string;
+
+  // Marquee / animation detection
+  hasMarquee?: boolean;
 }
 
 export interface BlockVariant {

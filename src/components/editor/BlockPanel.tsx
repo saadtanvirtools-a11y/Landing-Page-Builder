@@ -4,6 +4,7 @@ import { useAuthStore } from "../../store/authStore";
 import { db } from "../../firebase";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import type { ParsedBlock, Template, StandaloneBlock } from "../../types";
+import { useEditorStore } from "../../store/editorStore";
 
 // ── Block meta ─────────────────────────────────────────────
 const BLOCK_META: Record<string, { label: string; icon: string }> = {
@@ -21,6 +22,7 @@ const BLOCK_META: Record<string, { label: string; icon: string }> = {
   "how-it-works": { label: "How It Works", icon: "🔄" },
   other: { label: "Other", icon: "📦" },
 };
+
 
 // ── BlockOption (from template) ────────────────────────────
 export interface BlockOption {
@@ -378,14 +380,11 @@ function StandaloneBlockCard({
 interface BlockPanelProps {
   draggingOption: BlockOption | null;
   canvasBlockIds: string[];
-  assignedTemplateId: string | null;
 }
-
 // ── BLOCK PANEL ────────────────────────────────────────────
 export default function BlockPanel({
   draggingOption,
   canvasBlockIds,
-  assignedTemplateId,
 }: BlockPanelProps) {
   const [expandedType, setExpandedType] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -394,42 +393,35 @@ export default function BlockPanel({
   const [standaloneBlocks, setStandaloneBlocks] = useState<StandaloneBlock[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(true);
   const [loadingBlocks, setLoadingBlocks] = useState(true);
+  const currentTemplate = useEditorStore((s) => s.currentTemplate);
 
-  useEffect(() => {
-    setLoadingTemplates(true);
+useEffect(() => {
+  setLoadingTemplates(true);
 
-    const fetchTemplates = async () => {
-      try {
-        let templates: Template[] = [];
-
-        if (assignedTemplateId) {
-          const q = query(collection(db, "templates"), where("__name__", "==", assignedTemplateId));
-          const snap = await getDocs(q);
-
-          if (snap.empty) {
-            const allSnap = await getDocs(collection(db, "templates"));
-            templates = allSnap.docs
-              .map((d) => d.data() as Template)
-              .filter((t) => t.id === assignedTemplateId);
-          } else {
-            templates = snap.docs.map((d) => d.data() as Template);
-          }
-        } else {
-          const snap = await getDocs(collection(db, "templates"));
-          templates = snap.docs.map((d) => d.data() as Template);
-        }
-
-        setAllTemplates(templates);
-      } catch (err) {
-        console.error("[BlockPanel] Failed to load templates:", err);
+  const fetchTemplates = async () => {
+    try {
+      if (!currentTemplate?.id) {
         setAllTemplates([]);
-      } finally {
-        setLoadingTemplates(false);
+        return;
       }
-    };
 
-    fetchTemplates();
-  }, [assignedTemplateId]);
+      const snap = await getDocs(collection(db, "templates"));
+
+      const templates = snap.docs
+        .map((d) => d.data() as Template)
+        .filter((t) => t.id === currentTemplate.id);
+
+      setAllTemplates(templates);
+    } catch (err) {
+      console.error("[BlockPanel] Failed to load templates:", err);
+      setAllTemplates([]);
+    } finally {
+      setLoadingTemplates(false);
+    }
+  };
+
+  fetchTemplates();
+}, [currentTemplate?.id]);
 
   useEffect(() => {
     setLoadingBlocks(true);

@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { useEditorStore } from "../../store/editorStore";
 import type { ParsedBlock, Template, EditableItem, PageScripts } from "../../types";
 
 // ─────────────────────────────────────────────────────────────
@@ -89,6 +90,76 @@ function prettifyLabel(id: string): string {
 function isValidSvgMarkup(value: string): boolean {
   const trimmed = value.trim();
   return trimmed.startsWith("<svg") && trimmed.includes("</svg>");
+}
+
+function hasMarqueeCss(css: string): boolean {
+  const lower = (css || "").toLowerCase();
+  return (
+    lower.includes("marquee") ||
+    lower.includes("marquee-track") ||
+    lower.includes("marquee-wrapper") ||
+    lower.includes("marquee-container") ||
+    /@keyframes\s+[^{]*marquee/i.test(css) ||
+    /animation\s*:[^;]*marquee/i.test(css)
+  );
+}
+
+function extractMarqueeSpeed(css: string): number {
+  if (!css) return 20;
+
+  const animationDurationMatch = css.match(/animation-duration\s*:\s*(\d+(?:\.\d+)?)(ms|s)/i);
+  if (animationDurationMatch) {
+    const value = parseFloat(animationDurationMatch[1]);
+    const unit = animationDurationMatch[2].toLowerCase();
+    return unit === "ms" ? Math.max(1, Math.round(value / 1000)) : value;
+  }
+
+  const animationMatch = css.match(/animation\s*:[^;]*?(\d+(?:\.\d+)?)(ms|s)[^;]*;/i);
+  if (animationMatch) {
+    const value = parseFloat(animationMatch[1]);
+    const unit = animationMatch[2].toLowerCase();
+    return unit === "ms" ? Math.max(1, Math.round(value / 1000)) : value;
+  }
+
+  return 20;
+}
+
+function updateMarqueeSpeed(css: string, newSpeed: number): string {
+  if (!css) return css;
+  const speed = `${newSpeed}s`;
+
+  let updated = css.replace(
+    /(animation-duration\s*:\s*)(\d+(?:\.\d+)?)(ms|s)/gi,
+    `$1${speed}`
+  );
+
+  updated = updated.replace(
+    /(animation\s*:[^;]*?)(\d+(?:\.\d+)?)(ms|s)([^;]*;)/gi,
+    `$1${speed}$4`
+  );
+
+  return updated;
+}
+
+function extractMarqueeCssPreview(css: string): string {
+  if (!css) return "";
+
+  const parts: string[] = [];
+  const keyframesRegex = /@keyframes\s+[^{]*marquee[\s\S]*?}\s*}/gi;
+  const ruleRegex = /[^{}]*(marquee|animation)[^{}]*\{[^{}]*\}/gi;
+
+  let match: RegExpExecArray | null;
+
+  while ((match = keyframesRegex.exec(css)) !== null) {
+    parts.push(match[0].trim());
+  }
+
+  while ((match = ruleRegex.exec(css)) !== null) {
+    const rule = match[0].trim();
+    if (!parts.includes(rule)) parts.push(rule);
+  }
+
+  return parts.join("\n\n");
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -604,24 +675,6 @@ function PageSettingsSection({
             uploadLabel="Upload favicon"
           />
         </div>
-
-        <div>
-          <FieldLabel>Head Scripts</FieldLabel>
-          <TextArea
-            value={pageSettings.headScripts || ""}
-            onChange={(v) => onPageSettingsChange({ headScripts: v })}
-            rows={6}
-          />
-        </div>
-
-        <div>
-          <FieldLabel>Body Scripts</FieldLabel>
-          <TextArea
-            value={pageSettings.bodyScripts || ""}
-            onChange={(v) => onPageSettingsChange({ bodyScripts: v })}
-            rows={6}
-          />
-        </div>
       </div>
     </AccordionSection>
   );
@@ -926,6 +979,63 @@ function EmptyState() {
   );
 }
 
+// 🔥 ADD THIS NEW COMPONENT (PUT ABOVE MAIN EXPORT)
+
+function MarqueeControlSection({ selectedBlock }: { selectedBlock: ParsedBlock | null }) {
+  const currentTemplate = useEditorStore((state) => state.currentTemplate);
+  const updateRawCss = useEditorStore((state) => (state as any).updateRawCss);
+
+  const rawCss = String((currentTemplate as any)?.rawCss || "");
+
+  // ❌ if no block selected → hide
+  if (!selectedBlock) return null;
+
+  // ❌ if selected block is NOT marquee → hide
+  const blockHtml = (selectedBlock.rawHtml || "").toLowerCase();
+  const isMarqueeBlock =
+    blockHtml.includes("marquee") ||
+    blockHtml.includes("marquee-track") ||
+    blockHtml.includes("marquee-wrapper");
+
+  if (!isMarqueeBlock) return null;
+
+  // ❌ if no css → hide
+  if (!hasMarqueeCss(rawCss) || typeof updateRawCss !== "function") return null;
+
+  const speed = extractMarqueeSpeed(rawCss);
+  const marqueeCssPreview = extractMarqueeCssPreview(rawCss);
+
+  return (
+    <AccordionSection icon="🎞️" title="Marquee Animation" defaultOpen={true}>
+      <div className="space-y-4">
+        <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2">
+          <p className="text-[11px] text-indigo-700">
+            Edit marquee animation for this section
+          </p>
+        </div>
+
+        <div>
+          <FieldLabel>Animation Speed: {speed}s</FieldLabel>
+          <input
+            type="range"
+            min={5}
+            max={80}
+            value={speed}
+            onChange={(e) => {
+              const nextSpeed = Number(e.target.value);
+              const updatedCss = updateMarqueeSpeed(rawCss, nextSpeed);
+              updateRawCss(updatedCss);
+            }}
+            className="w-full"
+          />
+        </div>
+
+        <TextArea value={marqueeCssPreview} onChange={() => {}} rows={8} />
+      </div>
+    </AccordionSection>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────
 // MAIN COMPONENT
 // ─────────────────────────────────────────────────────────────
@@ -940,11 +1050,15 @@ export default function PropertiesPanel({
   onBlockStyleChange,
   resolveLiveColor,
 }: Props) {
-  if (!selectedBlock || !template) return <EmptyState />;
+  if (!template) return null;
 
-  const { blockId, blockName, editables, colorVars, styles } = selectedBlock;
+  // ✅ SAFE ACCESS (NO CRASH)
+  const blockId = selectedBlock?.blockId || "";
+  const blockName = selectedBlock?.blockName || "No Section Selected";
+  const editables = selectedBlock?.editables || [];
+  const colorVars = selectedBlock?.colorVars || {};
+  const styles = selectedBlock?.styles || {};
 
-  // ✅ text items that are NOT svg markup
   const textEditables = editables.filter(
     (e) => e.type === "text" && !isValidSvgMarkup(e.content)
   );
@@ -952,171 +1066,95 @@ export default function PropertiesPanel({
   const imageEditables = editables.filter((e) => e.type === "image");
   const linkEditables = editables.filter((e) => e.type === "link");
 
-  // ✅ real svg type OR text containing svg markup
   const svgEditables = editables.filter(
     (e) => e.type === "svg" || (e.type === "text" && isValidSvgMarkup(e.content))
   );
 
   return (
     <div className="w-80 bg-gradient-to-b from-white to-slate-50 border-l border-indigo-100 flex flex-col h-full overflow-hidden">
+
       {/* HEADER */}
       <div className="px-5 py-4 border-b border-indigo-100 bg-gradient-to-r from-indigo-600 to-violet-600 shrink-0 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-2xl bg-white/18 backdrop-blur flex items-center justify-center shrink-0 border border-white/25">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.4">
-              <path d="M12 20h9" />
-              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-            </svg>
-          </div>
-
-          <div className="min-w-0 flex-1">
-            <h2 className="font-semibold text-white text-sm leading-tight truncate capitalize">
-              {blockName || blockId}
-            </h2>
-            <p className="text-xs text-indigo-100 leading-tight mt-0.5">
-              {editables.length} field{editables.length !== 1 ? "s" : ""} · live editing
-            </p>
-          </div>
-
-          <div className="shrink-0 bg-white/15 text-white text-[11px] font-bold px-2 py-1 rounded-lg border border-white/20">
-            #{blockId}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 mt-3 flex-wrap">
-          {Object.keys(colorVars ?? {}).length > 0 && (
-            <span className="flex items-center gap-1 text-[11px] bg-white/15 text-white px-2 py-1 rounded-lg border border-white/20">
-              🎨 {Object.keys(colorVars ?? {}).length} color
-              {Object.keys(colorVars ?? {}).length !== 1 ? "s" : ""}
-            </span>
-          )}
-
-          {textEditables.length > 0 && (
-            <span className="flex items-center gap-1 text-[11px] bg-white/15 text-white px-2 py-1 rounded-lg border border-white/20">
-              ✏️ {textEditables.length} text
-            </span>
-          )}
-
-          {imageEditables.length > 0 && (
-            <span className="flex items-center gap-1 text-[11px] bg-white/15 text-white px-2 py-1 rounded-lg border border-white/20">
-              🖼 {imageEditables.length} img
-            </span>
-          )}
-
-          {linkEditables.length > 0 && (
-            <span className="flex items-center gap-1 text-[11px] bg-white/15 text-white px-2 py-1 rounded-lg border border-white/20">
-              🔗 {linkEditables.length} link
-            </span>
-          )}
-
-          {svgEditables.length > 0 && (
-            <span className="flex items-center gap-1 text-[11px] bg-white/15 text-white px-2 py-1 rounded-lg border border-white/20">
-              ⬡ {svgEditables.length} svg
-            </span>
-          )}
-        </div>
+        <h2 className="text-white text-sm font-semibold">
+          {selectedBlock ? blockName : "Page Settings"}
+        </h2>
       </div>
 
       {/* BODY */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1.5 scrollbar-thin scrollbar-thumb-indigo-100">
-        <PageSettingsSection
-          pageSettings={pageSettings}
-          onPageSettingsChange={onPageSettingsChange}
-        />
+      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-1.5">
 
-        <BlockStylesSection
-          blockId={blockId}
-          styles={{ bgColor: styles?.bgColor }}
-          onBlockStyleChange={onBlockStyleChange}
-        />
+        {/* ✅ ALWAYS VISIBLE */}
+     <PageSettingsSection
+  pageSettings={pageSettings}
+  onPageSettingsChange={onPageSettingsChange}
+/>
 
-        <BlockColorVars
-          colorVars={colorVars ?? {}}
-          onCssVarChange={onCssVarChange}
-          resolveLiveColor={resolveLiveColor}
-        />
+<MarqueeControlSection selectedBlock={selectedBlock} />
+        {/* ✅ ONLY IF BLOCK SELECTED */}
+        {selectedBlock ? (
+          <>
+            <BlockStylesSection
+              blockId={blockId}
+              styles={{ bgColor: styles?.bgColor }}
+              onBlockStyleChange={onBlockStyleChange}
+            />
 
-        {textEditables.length > 0 && (
-          <AccordionSection icon="✏️" title="Text Content" badge={textEditables.length}>
-            <div className="space-y-2.5">
-              {textEditables.map((item) => (
-                <EditableCard
-                  key={item.id}
-                  item={item}
-                  onEditableChange={onEditableChange}
-                  onCssVarChange={onCssVarChange}
-                  onClassSwap={onClassSwap}
-                  resolveLiveColor={resolveLiveColor}
-                />
-              ))}
-            </div>
-          </AccordionSection>
-        )}
+            <BlockColorVars
+              colorVars={colorVars}
+              onCssVarChange={onCssVarChange}
+              resolveLiveColor={resolveLiveColor}
+            />
 
-        {linkEditables.length > 0 && (
-          <AccordionSection icon="🔗" title="Links" badge={linkEditables.length}>
-            <div className="space-y-2.5">
-              {linkEditables.map((item) => (
-                <EditableCard
-                  key={item.id}
-                  item={item}
-                  onEditableChange={onEditableChange}
-                  onCssVarChange={onCssVarChange}
-                  onClassSwap={onClassSwap}
-                  resolveLiveColor={resolveLiveColor}
-                />
-              ))}
-            </div>
-          </AccordionSection>
-        )}
+            {textEditables.length > 0 && (
+              <AccordionSection icon="✏️" title="Text Content">
+                {textEditables.map((item) => (
+                  <EditableCard
+                    key={item.id}
+                    item={item}
+                    onEditableChange={onEditableChange}
+                    onCssVarChange={onCssVarChange}
+                    onClassSwap={onClassSwap}
+                    resolveLiveColor={resolveLiveColor}
+                  />
+                ))}
+              </AccordionSection>
+            )}
 
-        {imageEditables.length > 0 && (
-          <AccordionSection icon="🖼️" title="Images" badge={imageEditables.length}>
-            <div className="space-y-2.5">
-              {imageEditables.map((item) => (
-                <EditableCard
-                  key={item.id}
-                  item={item}
-                  onEditableChange={onEditableChange}
-                  onCssVarChange={onCssVarChange}
-                  onClassSwap={onClassSwap}
-                  resolveLiveColor={resolveLiveColor}
-                />
-              ))}
-            </div>
-          </AccordionSection>
-        )}
+            {imageEditables.length > 0 && (
+              <AccordionSection icon="🖼️" title="Images">
+                {imageEditables.map((item) => (
+                  <EditableCard
+                    key={item.id}
+                    item={item}
+                    onEditableChange={onEditableChange}
+                    onCssVarChange={onCssVarChange}
+                    onClassSwap={onClassSwap}
+                    resolveLiveColor={resolveLiveColor}
+                  />
+                ))}
+              </AccordionSection>
+            )}
 
-        {svgEditables.length > 0 && (
-          <AccordionSection icon="⬡" title="SVG Content" badge={svgEditables.length}>
-            <div className="space-y-2.5">
-              {svgEditables.map((item) => (
-                <EditableCard
-                  key={item.id}
-                  item={item}
-                  onEditableChange={onEditableChange}
-                  onCssVarChange={onCssVarChange}
-                  onClassSwap={onClassSwap}
-                  resolveLiveColor={resolveLiveColor}
-                />
-              ))}
-            </div>
-          </AccordionSection>
-        )}
-
-        {editables.length === 0 && Object.keys(colorVars ?? {}).length === 0 && (
-          <div className="text-center py-10">
-            <div className="text-3xl mb-2">🔍</div>
-            <p className="text-xs font-semibold text-slate-500">No editable fields</p>
-            <p className="text-xs text-slate-400 mt-1">Use block styles above to customize.</p>
+            {svgEditables.length > 0 && (
+              <AccordionSection icon="⬡" title="SVG Content">
+                {svgEditables.map((item) => (
+                  <EditableCard
+                    key={item.id}
+                    item={item}
+                    onEditableChange={onEditableChange}
+                    onCssVarChange={onCssVarChange}
+                    onClassSwap={onClassSwap}
+                    resolveLiveColor={resolveLiveColor}
+                  />
+                ))}
+              </AccordionSection>
+            )}
+          </>
+        ) : (
+          <div className="text-center py-10 text-gray-400 text-sm">
+            Select a section to edit content
           </div>
         )}
-      </div>
-
-      {/* FOOTER */}
-      <div className="px-5 py-3 border-t border-indigo-100 bg-white/80 shrink-0 flex items-center justify-center gap-2">
-        <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-        <p className="text-xs text-slate-400">Changes apply instantly to the canvas</p>
       </div>
     </div>
   );

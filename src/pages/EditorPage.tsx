@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useEditorStore } from "../store/editorStore";
 import { useAuthStore } from "../store/authStore";
@@ -7,7 +7,6 @@ import { db } from "../firebase";
 import { doc, getDoc } from "firebase/firestore";
 import type { Template } from "../types";
 
-// ✅ Fetch original template from Firestore by ID
 async function fetchTemplateFromFirestore(templateId: string): Promise<Template | null> {
   try {
     const snap = await getDoc(doc(db, "templates", templateId));
@@ -24,24 +23,36 @@ export default function EditorPage() {
   const navigate = useNavigate();
 
   const { user, loadFromStorage: refreshAuthUser } = useAuthStore();
-  const { loadTemplate, loadFromStorage } = useEditorStore();
+  const { loadTemplate, loadFromStorage, resetEditor } = useEditorStore();
 
   const [status, setStatus] = useState<"loading" | "ready" | "no-template" | "not-assigned">("loading");
 
-  // ── Refresh auth user from localStorage on mount ──
+  const routeTemplateId = useMemo(() => {
+    return ((location.state as any)?.templateId as string | undefined) || null;
+  }, [location.state]);
+
+  const fallbackTemplateId = useMemo(() => {
+    const ids = Array.isArray((user as any)?.assignedTemplateIds)
+      ? ((user as any).assignedTemplateIds as string[])
+      : [];
+
+    return routeTemplateId || ids[0] || user?.assignedTemplateId || null;
+  }, [routeTemplateId, user]);
+
   useEffect(() => {
     refreshAuthUser();
   }, [refreshAuthUser]);
 
   useEffect(() => {
-    const routeTemplateId: string | null = (location.state as any)?.templateId ?? null;
-    const templateId: string | null = routeTemplateId ?? user?.assignedTemplateId ?? null;
+    const templateId = fallbackTemplateId;
 
-    console.log("=== [EDITOR PAGE MOUNT] ===");
-    console.log("[EditorPage] resolved templateId:", templateId);
+    console.log("=== [EDITOR PAGE INIT] ===");
+    console.log("[EditorPage] routeTemplateId:", routeTemplateId);
+    console.log("[EditorPage] final templateId:", templateId);
     console.log("[EditorPage] user.id:", user?.id);
 
     if (!templateId) {
+      resetEditor();
       setStatus("not-assigned");
       return;
     }
@@ -51,17 +62,19 @@ export default function EditorPage() {
     const init = async () => {
       setStatus("loading");
 
-      // ── STEP 1: Try saved user project/localStorage through store loader ──
+      // Important: clear previous template first
+      // This stops template 1 from staying visible when opening template 2.
+      resetEditor();
+
       if (user?.id) {
         try {
           await loadFromStorage(user.id, templateId);
 
           const loadedTemplate = useEditorStore.getState().currentTemplate;
-          console.log("[EditorPage] after loadFromStorage currentTemplate.id:", loadedTemplate?.id);
 
           if (!cancelled && loadedTemplate?.id === templateId) {
             setStatus("ready");
-            console.log("[EditorPage] ✅ Loaded editor state from userProjects/localStorage");
+            console.log("[EditorPage] Loaded saved project:", templateId);
             return;
           }
         } catch (e) {
@@ -69,22 +82,18 @@ export default function EditorPage() {
         }
       }
 
-      // ── STEP 2: Fallback to original template in Firestore ──────────────
-      console.log("[EditorPage] No saved project found, fetching original template:", templateId);
-
       const found = await fetchTemplateFromFirestore(templateId);
 
       if (cancelled) return;
 
       if (!found) {
-        console.warn("[EditorPage] ❌ Template not found in Firestore");
         setStatus("no-template");
         return;
       }
 
       loadTemplate(found);
       setStatus("ready");
-      console.log("[EditorPage] ✅ Fresh load from templates collection");
+      console.log("[EditorPage] Loaded fresh template:", templateId);
     };
 
     init();
@@ -92,9 +101,15 @@ export default function EditorPage() {
     return () => {
       cancelled = true;
     };
-  }, [location.state, user?.assignedTemplateId, user?.id, loadTemplate, loadFromStorage]);
+  }, [
+    fallbackTemplateId,
+    routeTemplateId,
+    user?.id,
+    loadTemplate,
+    loadFromStorage,
+    resetEditor,
+  ]);
 
-  // ── Loading screen ────────────────────────────────────────────────────────
   if (status === "loading") {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -107,7 +122,6 @@ export default function EditorPage() {
     );
   }
 
-  // ── Not assigned screen ───────────────────────────────────────────────────
   if (status === "not-assigned") {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -126,14 +140,14 @@ export default function EditorPage() {
     );
   }
 
-  // ── Template not found screen ─────────────────────────────────────────────
   if (status === "no-template") {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center max-w-sm">
           <div className="text-6xl mb-4">⚠️</div>
           <h2 className="text-xl font-bold text-gray-700 mb-2">Template Not Found</h2>
-          <p className="text-sm text-gray-500 mb-2">The assigned template could not be loaded.</p>
+          <p className="text-sm text-gray-500 mb-2">This template could not be loaded.</p>
+
           <div className="flex gap-3 justify-center">
             <button
               onClick={() => navigate("/dashboard")}
@@ -141,6 +155,7 @@ export default function EditorPage() {
             >
               ← Dashboard
             </button>
+
             <button
               onClick={() => window.location.reload()}
               className="px-5 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition text-sm"
@@ -153,5 +168,5 @@ export default function EditorPage() {
     );
   }
 
-  return <EditorLayout />;
+  return <EditorLayout key={fallbackTemplateId || "editor"} />;
 }

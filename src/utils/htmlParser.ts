@@ -1,8 +1,86 @@
 import type { CSSVariables, EditableItem, ParsedBlock, Template, PageScripts } from "../types";
 
-// ─────────────────────────────────────────────────────────
-// STEP 1 — Extract all CSS variables from :root {} in <style>
-// ─────────────────────────────────────────────────────────
+function detectSpecialScripts(html: string, js: string) {
+  const combined = `${html}\n${js}`.toLowerCase();
+
+  return {
+    hasMarquee:
+      combined.includes("marquee") ||
+      combined.includes("data-marquee") ||
+      combined.includes("marquee-track") ||
+      combined.includes("marquee-wrapper") ||
+      combined.includes("marquee-container") ||
+      combined.includes("scrollamount") ||
+      combined.includes("translatex"),
+  };
+}
+
+function extractMarqueeOnlyJs(js: string): string {
+  if (!js || !js.trim()) return "";
+
+  const lines = js.split("\n");
+  const result: string[] = [];
+
+  let capture = false;
+  let braceDepth = 0;
+
+  const marqueeKeywords = [
+    "marquee",
+    "data-marquee",
+    "marquee-track",
+    "marquee-wrapper",
+    "marquee-container",
+    "scrollamount",
+    "translatex",
+  ];
+
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+
+    if (!capture && marqueeKeywords.some((k) => lower.includes(k))) {
+      capture = true;
+    }
+
+    if (capture) {
+      result.push(line);
+
+      const open = (line.match(/\{/g) || []).length;
+      const close = (line.match(/\}/g) || []).length;
+      braceDepth += open - close;
+
+      if (braceDepth <= 0 && line.trim().endsWith(";")) {
+        capture = false;
+        braceDepth = 0;
+        result.push("");
+      }
+    }
+  }
+
+  return result.join("\n").trim();
+}
+
+function extractInlineScripts(doc: Document): { headScripts: string; bodyScripts: string } {
+  const headScripts = Array.from(doc.head?.querySelectorAll("script") || [])
+    .map((s) => {
+      const text = s.textContent || "";
+      const marqueeJs = extractMarqueeOnlyJs(text);
+      return marqueeJs ? `<script>\n${marqueeJs}\n</script>` : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  const bodyScripts = Array.from(doc.body?.querySelectorAll("script") || [])
+    .map((s) => {
+      const text = s.textContent || "";
+      const marqueeJs = extractMarqueeOnlyJs(text);
+      return marqueeJs ? `<script>\n${marqueeJs}\n</script>` : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  return { headScripts, bodyScripts };
+}
+
 function extractCSSVariables(doc: Document): CSSVariables {
   const vars: CSSVariables = {};
   const styleTags = Array.from(doc.querySelectorAll("style"));
@@ -24,10 +102,6 @@ function extractCSSVariables(doc: Document): CSSVariables {
   return vars;
 }
 
-// ─────────────────────────────────────────────────────────
-// STEP 2 — Parse data-color-vars attribute into a map
-// safer: split only at first colon
-// ─────────────────────────────────────────────────────────
 function parseColorVars(raw: string): Record<string, string> {
   const result: Record<string, string> = {};
   if (!raw) return result;
@@ -45,10 +119,10 @@ function parseColorVars(raw: string): Record<string, string> {
   return result;
 }
 
-// ─────────────────────────────────────────────────────────
-// helper — read tailwind class and child selector if needed
-// ─────────────────────────────────────────────────────────
-function readTailwindClass(el: Element): { tailwindClass: string; styleChildSelector?: string } {
+function readTailwindClass(el: Element): {
+  tailwindClass: string;
+  styleChildSelector?: string;
+} {
   const ownClass = el.getAttribute("class") || "";
   if (ownClass.trim()) return { tailwindClass: ownClass };
 
@@ -66,39 +140,31 @@ function readTailwindClass(el: Element): { tailwindClass: string; styleChildSele
   return { tailwindClass: "" };
 }
 
-// ─────────────────────────────────────────────────────────
-// helper — sanitize SVG so editor stores only real markup
-// ─────────────────────────────────────────────────────────
 function extractSvgMarkup(el: Element): string {
-  if (el.tagName.toLowerCase() === "svg") {
-    return el.outerHTML.trim();
-  }
+  if (el.tagName.toLowerCase() === "svg") return el.outerHTML.trim();
 
-  const directSvg = Array.from(el.children).find((child) => child.tagName.toLowerCase() === "svg");
-  if (directSvg) {
-    return directSvg.outerHTML.trim();
-  }
+  const directSvg = Array.from(el.children).find(
+    (child) => child.tagName.toLowerCase() === "svg"
+  );
+  if (directSvg) return directSvg.outerHTML.trim();
 
   const nestedSvg = el.querySelector("svg");
-  if (nestedSvg) {
-    return nestedSvg.outerHTML.trim();
-  }
+  if (nestedSvg) return nestedSvg.outerHTML.trim();
 
   return (el.innerHTML || "").trim();
 }
 
-// ─────────────────────────────────────────────────────────
-// STEP 3 — Extract all [data-editable] elements inside a block
-// ─────────────────────────────────────────────────────────
 function extractEditables(blockEl: Element): EditableItem[] {
   const editables: EditableItem[] = [];
   const elements = Array.from(blockEl.querySelectorAll("[data-editable]"));
 
   for (const el of elements) {
     const id = el.getAttribute("data-editable") || "";
-    const rawType = (el.getAttribute("data-editable-type") || "text").trim().toLowerCase();
-    let type = rawType as "text" | "image" | "link" | "svg";
+    const rawType = (el.getAttribute("data-editable-type") || "text")
+      .trim()
+      .toLowerCase();
 
+    let type = rawType as "text" | "image" | "link" | "svg";
     let content = "";
 
     if (type === "image") {
@@ -111,8 +177,11 @@ function extractEditables(blockEl: Element): EditableItem[] {
       content = (el.textContent || "").trim();
     }
 
-    // ✅ Auto-detect SVG: if type is "text" but element contains SVG, treat as SVG
-    if (type === "text" && (content === "" || content.trim() === "") && el.querySelector("svg")) {
+    if (
+      type === "text" &&
+      (content === "" || content.trim() === "") &&
+      el.querySelector("svg")
+    ) {
       type = "svg";
       content = extractSvgMarkup(el);
     }
@@ -134,10 +203,11 @@ function extractEditables(blockEl: Element): EditableItem[] {
   return editables;
 }
 
-// ─────────────────────────────────────────────────────────
-// STEP 4 — Extract all [data-block] sections
-// ─────────────────────────────────────────────────────────
-function extractBlocks(doc: Document, templateId: string, templateName: string): ParsedBlock[] {
+function extractBlocks(
+  doc: Document,
+  templateId: string,
+  templateName: string
+): ParsedBlock[] {
   const blocks: ParsedBlock[] = [];
   const blockElements = Array.from(doc.querySelectorAll("[data-block]"));
 
@@ -147,18 +217,14 @@ function extractBlocks(doc: Document, templateId: string, templateName: string):
     const blockOrder = parseInt(el.getAttribute("data-block-order") || "0", 10);
     const removable = el.getAttribute("data-block-removable") !== "false";
 
-    const wrapperColorVarsRaw = el.getAttribute("data-color-vars") || "";
-    const editables = extractEditables(el);
-    const rawHtml = el.outerHTML;
-
     blocks.push({
       blockId,
       blockName,
       blockOrder,
       removable,
-      colorVars: parseColorVars(wrapperColorVarsRaw),
-      editables,
-      rawHtml,
+      colorVars: parseColorVars(el.getAttribute("data-color-vars") || ""),
+      editables: extractEditables(el),
+      rawHtml: el.outerHTML,
       sourceTemplateId: templateId,
       sourceTemplateName: templateName,
     });
@@ -168,50 +234,72 @@ function extractBlocks(doc: Document, templateId: string, templateName: string):
   return blocks;
 }
 
-// ─────────────────────────────────────────────────────────
-// HELPER — Replace asset paths in HTML before parsing
-// ─────────────────────────────────────────────────────────
-export function replaceAssetPathsInHtml(html: string, assetMap: Record<string, string>): string {
-  if (!html || !assetMap || Object.keys(assetMap).length === 0) {
-    return html;
-  }
+export function replaceAssetPathsInHtml(
+  html: string,
+  assetMap: Record<string, string>
+): string {
+  if (!html || !assetMap || Object.keys(assetMap).length === 0) return html;
 
   let updatedHtml = html;
 
   Object.entries(assetMap).forEach(([oldPath, newUrl]) => {
     const escaped = oldPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-    updatedHtml = updatedHtml.replace(new RegExp(`src=["']${escaped}["']`, "gi"), `src="${newUrl}"`);
+    updatedHtml = updatedHtml.replace(
+      new RegExp(`src=["']${escaped}["']`, "gi"),
+      `src="${newUrl}"`
+    );
 
-    updatedHtml = updatedHtml.replace(new RegExp(`href=["']${escaped}["']`, "gi"), `href="${newUrl}"`);
+    updatedHtml = updatedHtml.replace(
+      new RegExp(`href=["']${escaped}["']`, "gi"),
+      `href="${newUrl}"`
+    );
 
-    updatedHtml = updatedHtml.replace(new RegExp(`url\\(["']?${escaped}["']?\\)`, "gi"), `url("${newUrl}")`);
+    updatedHtml = updatedHtml.replace(
+      new RegExp(`url\\(["']?${escaped}["']?\\)`, "gi"),
+      `url("${newUrl}")`
+    );
   });
 
   return updatedHtml;
 }
 
-// ─────────────────────────────────────────────────────────
-// MAIN — Parse full HTML string into Template JSON
-// ─────────────────────────────────────────────────────────
-export function parseHtmlToTemplate(params: { htmlString: string; templateId: string; templateName: string; category: string }): Template {
-  const { htmlString, templateId, templateName, category } = params;
+export function parseHtmlToTemplate(params: {
+  htmlString: string;
+  templateId: string;
+  templateName: string;
+  category: string;
+  rawJs?: string;
+}): Template {
+  const { htmlString, templateId, templateName, category, rawJs = "" } = params;
 
   const parser = new DOMParser();
   const doc = parser.parseFromString(htmlString, "text/html");
 
   const cssVariables = extractCSSVariables(doc);
   const blocks = extractBlocks(doc, templateId, templateName);
+  const scriptFlags = detectSpecialScripts(htmlString, rawJs);
+  const inlineScripts = extractInlineScripts(doc);
+  const marqueeJsOnly = extractMarqueeOnlyJs(rawJs);
+
+  const bodyScripts = [
+    inlineScripts.bodyScripts,
+    marqueeJsOnly ? `<script id="lp-marquee-js">\n${marqueeJsOnly}\n</script>` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   const pageScripts: PageScripts = {
     gtmId: "",
-    headScripts: "",
-    bodyScripts: "",
-    pageTitle: "",
-    faviconUrl: "",
-    metaDescription: "",
+    headScripts: inlineScripts.headScripts,
+    bodyScripts,
+    pageTitle: doc.querySelector("title")?.textContent?.trim() || "",
+    faviconUrl: doc.querySelector('link[rel="icon"]')?.getAttribute("href") || "",
+    metaDescription:
+      doc.querySelector('meta[name="description"]')?.getAttribute("content") || "",
     googleAnalyticsId: "",
-  };
+    hasMarquee: scriptFlags.hasMarquee,
+  } as PageScripts;
 
   return {
     id: templateId,
@@ -221,17 +309,16 @@ export function parseHtmlToTemplate(params: { htmlString: string; templateId: st
     cssVariables,
     blocks,
     rawHtml: htmlString,
+    rawJs: marqueeJsOnly,
     pageScripts,
-  };
+  } as Template;
 }
 
-// ─────────────────────────────────────────────────────────────
-// Inject CSS variables into rawHtml as a <style> tag
-// ─────────────────────────────────────────────────────────────
-export function injectCSSVariables(rawHtml: string, cssVariables: CSSVariables): string {
-  if (!cssVariables || Object.keys(cssVariables).length === 0) {
-    return rawHtml;
-  }
+export function injectCSSVariables(
+  rawHtml: string,
+  cssVariables: CSSVariables
+): string {
+  if (!cssVariables || Object.keys(cssVariables).length === 0) return rawHtml;
 
   const varLines = Object.entries(cssVariables)
     .map(([k, v]) => `  ${k}: ${v};`)
@@ -239,7 +326,10 @@ export function injectCSSVariables(rawHtml: string, cssVariables: CSSVariables):
 
   const styleBlock = `<style id="lp-css-vars">\n:root {\n${varLines}\n}\n</style>`;
 
-  const cleaned = rawHtml.replace(/<style[^>]*id=["']lp-css-vars["'][^>]*>[\s\S]*?<\/style>/gi, "");
+  const cleaned = rawHtml.replace(
+    /<style[^>]*id=["']lp-css-vars["'][^>]*>[\s\S]*?<\/style>/gi,
+    ""
+  );
 
   if (cleaned.includes("</head>")) {
     return cleaned.replace("</head>", styleBlock + "\n</head>");
@@ -256,10 +346,12 @@ export function injectCSSVariables(rawHtml: string, cssVariables: CSSVariables):
   return cleaned + "\n" + styleBlock;
 }
 
-// ─────────────────────────────────────────────────────────
-// HELPER — Update a single editable's content in raw HTML
-// ─────────────────────────────────────────────────────────
-export function updateEditableInHtml(rawHtml: string, editableId: string, newContent: string, type: "text" | "image" | "link" | "svg"): string {
+export function updateEditableInHtml(
+  rawHtml: string,
+  editableId: string,
+  newContent: string,
+  type: "text" | "image" | "link" | "svg"
+): string {
   const parser = new DOMParser();
   const doc = parser.parseFromString(rawHtml, "text/html");
   const el = doc.querySelector(`[data-editable="${editableId}"]`);
@@ -299,7 +391,9 @@ export function updateEditableInHtml(rawHtml: string, editableId: string, newCon
       }
     }
   } else {
-    const textNodes = Array.from(el.childNodes).filter((n) => n.nodeType === Node.TEXT_NODE);
+    const textNodes = Array.from(el.childNodes).filter(
+      (n) => n.nodeType === Node.TEXT_NODE
+    );
 
     if (textNodes.length > 0) {
       textNodes[0].textContent = newContent;
