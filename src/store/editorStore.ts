@@ -124,12 +124,14 @@ function reparseBlockFromOwnHtml(
       .join(",");
     const colorVarsRaw = e.getAttribute("data-color-vars") || "";
     const content = readEditableContent(e, type);
+    const linkHref = e.tagName.toLowerCase() === "a" ? e.getAttribute("href") || "" : undefined;
     const { tailwindClass, styleChildSelector } = readTailwindClass(e);
 
     return {
       id,
       type: type as "text" | "image" | "link" | "svg",
       content,
+      linkHref,
       colorVars: parseColorVarsAttr(colorVarsRaw),
       tailwindClass,
       styleProps,
@@ -164,12 +166,14 @@ function reparseBlock(fullHtml: string, blockId: string): Partial<ParsedBlock> {
       .filter(Boolean)
       .join(",");
     const content = readEditableContent(e, type);
+    const linkHref = e.tagName.toLowerCase() === "a" ? e.getAttribute("href") || "" : undefined;
     const { tailwindClass, styleChildSelector } = readTailwindClass(e);
 
     return {
       id,
       type: type as "text" | "image" | "link" | "svg",
       content,
+      linkHref,
       colorVars: parseColorVarsAttr(e.getAttribute("data-color-vars") || ""),
       tailwindClass,
       styleProps,
@@ -362,6 +366,7 @@ interface EditorState {
   addBlockToTemplate: (block: ParsedBlock, insertAfterIndex?: number) => void;
   removeBlockFromTemplate: (blockId: string) => void;
   updateEditable: (editableId: string, newContent: string) => void;
+  updateEditableUrl: (editableId: string, newUrl: string) => void;
   updateCssVar: (varName: string, newValue: string) => void;
   updateClassSwap: (editableId: string, newClassList: string) => void;
   updateBlockStyle: (blockId: string, styleKey: string, value: string) => void;
@@ -685,6 +690,42 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           rawHtml: "<!DOCTYPE html>\n" + blockDoc.documentElement.outerHTML,
           editables: block.editables.map((e) =>
             e.id === editableId ? { ...e, content: newContent } : e
+          ),
+        };
+      });
+
+      return {
+        currentTemplate: {
+          ...currentTemplate,
+          blocks: updatedBlocks,
+          rawHtml: rebuildRawHtml(updatedBlocks, currentTemplate.rawHtml),
+        },
+      };
+    }),
+
+  updateEditableUrl: (editableId, newUrl) =>
+    set((state) => {
+      const { currentTemplate } = state;
+      if (!currentTemplate) return state;
+
+      const parser = new DOMParser();
+
+      const updatedBlocks = currentTemplate.blocks.map((block) => {
+        const editable = block.editables.find((e) => e.id === editableId);
+        if (!editable) return block;
+
+        const blockDoc = parser.parseFromString(block.rawHtml ?? "", "text/html");
+        const el = blockDoc.querySelector(`[data-editable="${editableId}"]`);
+
+        if (el && el.tagName.toLowerCase() === "a") {
+          el.setAttribute("href", newUrl || "#");
+        }
+
+        return {
+          ...block,
+          rawHtml: "<!DOCTYPE html>\n" + blockDoc.documentElement.outerHTML,
+          editables: block.editables.map((e) =>
+            e.id === editableId ? { ...e, linkHref: newUrl } : e
           ),
         };
       });

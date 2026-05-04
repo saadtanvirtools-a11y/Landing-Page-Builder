@@ -46,7 +46,6 @@ async function uploadToBucket(params: {
   const fileName = `${Date.now()}-${name}.${ext}`;
   const filePath = `${safeFolderPath}/${fileName}`;
 
-  console.log(`[uploadToBucket] bucket=${bucket} filePath=${filePath}`);
 
   const { data, error } = await supabase.storage
     .from(bucket)

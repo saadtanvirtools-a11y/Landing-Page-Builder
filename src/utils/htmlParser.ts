@@ -166,6 +166,7 @@ function extractEditables(blockEl: Element): EditableItem[] {
 
     let type = rawType as "text" | "image" | "link" | "svg";
     let content = "";
+    const linkHref = el.tagName.toLowerCase() === "a" ? el.getAttribute("href") || "" : undefined;
 
     if (type === "image") {
       content = el.getAttribute("src") || (el as HTMLImageElement).src || "";
@@ -197,6 +198,7 @@ function extractEditables(blockEl: Element): EditableItem[] {
       styleProps: el.getAttribute("data-style-props") || "",
       styleId: el.getAttribute("data-style-id") || "",
       styleChildSelector,
+      linkHref,
     });
   }
 

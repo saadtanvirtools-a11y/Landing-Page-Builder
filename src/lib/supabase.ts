@@ -9,5 +9,3 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey)
 
-console.log("SUPABASE URL =", import.meta.env.VITE_SUPABASE_URL)
-console.log("SUPABASE KEY EXISTS =", !!import.meta.env.VITE_SUPABASE_ANON_KEY)

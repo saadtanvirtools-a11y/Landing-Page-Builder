@@ -120,7 +120,7 @@ async function uploadImagesToSupabase(
     );
   });
 
-  console.log(`[uploadImagesToSupabase] Found ${imageFiles.length} image(s)`);
+ 
 
   let uploadedImageCount = 0;
 
@@ -130,8 +130,6 @@ async function uploadImagesToSupabase(
       const arrayBuffer = await file.async("arraybuffer");
       const mimeType = getImageMime(filename);
       const uploadFile = new File([arrayBuffer], filename, { type: mimeType });
-
-      console.log(`[uploadImagesToSupabase] Uploading: ${path}`);
 
       const uploaded = await uploadTemplateImage(uploadFile, templateId);
 
@@ -148,14 +146,14 @@ async function uploadImagesToSupabase(
       }
 
       uploadedImageCount++;
-      console.log(`[uploadImagesToSupabase] ✅ Success: ${filename}`, uploaded.url);
+      // console.log(`[uploadImagesToSupabase] ✅ Success: ${filename}`, uploaded.url);
     } catch (err: any) {
       console.error(`[uploadImagesToSupabase] ❌ Failed: ${path}`, err);
       throw new Error(`Image upload failed for ${filename}: ${err?.message || "Unknown error"}`);
     }
   }
 
-  console.log(`[uploadImagesToSupabase] Complete: ${uploadedImageCount} image(s) uploaded`);
+  //console.log(`[uploadImagesToSupabase] Complete: ${uploadedImageCount} image(s) uploaded`);
   return { urlMap, uploadedImageCount };
 }
 
@@ -200,46 +198,60 @@ function extractCustomCssOnly(css: string): string {
     css.includes("@layer utilities") ||
     css.includes("@layer components");
 
-  if (!isTailwindOutput) return css;
+  if (!isTailwindOutput) {
+    
+    return css;
+  }
 
+ 
   const kept: string[] = [];
 
-  const rootRegex = /:root\s*\{[^}]+\}/g;
+  const rootRegex = /:root\s*\{([^}]+)\}/g;
   let m: RegExpExecArray | null;
-  while ((m = rootRegex.exec(css)) !== null) kept.push(m[0]);
+  while ((m = rootRegex.exec(css)) !== null) {
+    kept.push(`:root {\n${m[1]}\n}`);
+  }
+
+  const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  let i = 0;
+  while (i < cssWithoutComments.length) {
+    const openBrace = cssWithoutComments.indexOf("{", i);
+    if (openBrace === -1) break;
+
+    let depth = 1;
+    let j = openBrace + 1;
+    while (j < cssWithoutComments.length && depth > 0) {
+      if (cssWithoutComments[j] === "{") depth++;
+      else if (cssWithoutComments[j] === "}") depth--;
+      j++;
+    }
+
+    const closeBrace = j - 1;
+    const block = cssWithoutComments.slice(openBrace + 1, closeBrace);
+    const selector = cssWithoutComments.slice(i, openBrace).trim();
+
+    if (block.includes("data:image/") || block.includes("data:font/")) {
+      const rule = `${selector} {\n${block.trim()}\n}`;
+      if (!kept.some((k) => k.trim() === rule.trim())) {
+        kept.push(rule);
+      }
+    }
+
+    i = closeBrace + 1;
+  }
 
   const fontFaceRegex = /@font-face\s*\{[^}]+\}/g;
-  while ((m = fontFaceRegex.exec(css)) !== null) kept.push(m[0]);
-
-  const keyframesRegex = /@keyframes\s+[^{]+\{[\s\S]*?\n\}/g;
-  while ((m = keyframesRegex.exec(css)) !== null) {
-    const block = m[0];
-    if (
-      block.toLowerCase().includes("marquee") ||
-      block.toLowerCase().includes("translatex")
-    ) {
-      kept.push(block);
-    }
+  while ((m = fontFaceRegex.exec(css)) !== null) {
+    kept.push(m[0]);
   }
 
-  const ruleRegex = /([^{}@]+)\{([^{}]+)\}/g;
-  while ((m = ruleRegex.exec(css)) !== null) {
-    const selector = m[1].trim();
-    const body = m[2].trim();
-    const combined = `${selector} ${body}`.toLowerCase();
+  const result = kept.join("\n\n").trim();
+  console.log(
+    `[extractCustomCssOnly] ${(css.length / 1024).toFixed(1)}KB → ${(result.length / 1024).toFixed(1)}KB`,
+    `| ${kept.length} rule(s) kept`
+  );
 
-    if (
-      combined.includes("marquee") ||
-      combined.includes("animation") ||
-      combined.includes("translatex") ||
-      combined.includes("data:image/") ||
-      combined.includes("data:font/")
-    ) {
-      kept.push(`${selector} {\n${body}\n}`);
-    }
-  }
-
-  return [...new Set(kept)].join("\n\n").trim();
+  return result;
 }
 
 function hashString(str: string): string {
@@ -690,15 +702,11 @@ export default function TemplateUpload({ onUploaded }: Props) {
       if (Object.keys(imageUrlMap).length > 0) {
         htmlString = embedImagesIntoHtml(htmlString, imageUrlMap);
         cssString = embedImagesIntoCss(cssString, imageUrlMap);
-        console.log(`[TemplateUpload] ✅ Embedded ${uploadedImageCount} image URL(s) from Supabase`);
+      
       }
 
       setUploadState({ status: "uploading", message: "Processing CSS...", progress: 60 });
       const strippedCss = extractCustomCssOnly(cssString);
-
-      console.log(
-        `[TemplateUpload] CSS: ${(cssString.length / 1024).toFixed(1)}KB → ${(strippedCss.length / 1024).toFixed(1)}KB after stripping Tailwind`
-      );
 
       setUploadState({ status: "uploading", message: "Parsing HTML structure...", progress: 70 });
 
@@ -720,8 +728,7 @@ const parsedTemplate = parseHtmlToTemplate({
       setUploadState({ status: "uploading", message: "Checking document size...", progress: 80 });
 
       const docBytes = new Blob([JSON.stringify(templateWithAssets)]).size;
-      console.log(`[TemplateUpload] Document size: ${(docBytes / 1024 / 1024).toFixed(2)} MB`);
-
+   
       if (docBytes > 900_000) {
         throw new Error(
           `Document is still ${(docBytes / 1024 / 1024).toFixed(1)} MB. Please reduce CSS or contact support.`

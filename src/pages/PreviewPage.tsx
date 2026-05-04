@@ -153,7 +153,7 @@ export default function PreviewPage() {
 
           if (!cancelled && loadedTemplate?.id === templateId) {
             setStatus("ready");
-            console.log("[PreviewPage] ✅ Loaded preview from userProjects/localStorage");
+           
             return;
           }
         } catch (e) {
@@ -167,7 +167,6 @@ export default function PreviewPage() {
       if (found) {
         loadTemplate(found);
         setStatus("ready");
-        console.log("[PreviewPage] ✅ Loaded preview from templates collection");
       } else {
         setStatus("empty");
       }

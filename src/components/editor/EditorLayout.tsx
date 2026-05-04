@@ -329,6 +329,83 @@ function buildGroupedBlocksFromTemplates(
   return groups;
 }
 
+function isLockedSectionForReorder(block: any): boolean {
+  const blockId = String(block?.blockId || "").toLowerCase();
+  const blockName = String(block?.blockName || "").toLowerCase();
+
+  return (
+    blockId.includes("navbar") ||
+    blockId.includes("nav") ||
+    blockId.includes("header") ||
+    blockId.includes("footer") ||
+    blockId.includes("hero") ||
+    blockName.includes("navbar") ||
+    blockName.includes("nav") ||
+    blockName.includes("header") ||
+    blockName.includes("footer") ||
+    blockName.includes("hero")
+  );
+}
+
+function getOrderedBlocks(template: Template | null | undefined) {
+  return [...(template?.blocks ?? [])].sort(
+    (a, b) => (a.blockOrder ?? 0) - (b.blockOrder ?? 0)
+  );
+}
+
+function getDropTargetBlockId(
+  blocks: any[],
+  movingBlockId: string,
+  overId: string | null
+): string | null {
+  if (!overId) return null;
+
+  const movingIndex = blocks.findIndex((b) => b.blockId === movingBlockId);
+  if (movingIndex === -1) return null;
+
+  const withoutMoving = blocks.filter((b) => b.blockId !== movingBlockId);
+
+  let insertIndex = withoutMoving.length;
+
+  if (overId === "drop-before-0") {
+    insertIndex = 0;
+  } else if (overId.startsWith("drop-after-")) {
+    const originalTargetIndex = Number(overId.replace("drop-after-", ""));
+    const originalTargetBlock = blocks[originalTargetIndex];
+
+    if (!originalTargetBlock) return null;
+
+    const targetIndexAfterRemovingMoving = withoutMoving.findIndex(
+      (b) => b.blockId === originalTargetBlock.blockId
+    );
+
+    if (targetIndexAfterRemovingMoving === -1) return null;
+
+    insertIndex = targetIndexAfterRemovingMoving + 1;
+  }
+
+  const clampedIndex = Math.max(0, Math.min(insertIndex, withoutMoving.length));
+
+  const beforeBlock = withoutMoving[clampedIndex - 1];
+  const afterBlock = withoutMoving[clampedIndex];
+
+  // Prevent putting anything before locked top sections like Navbar/Hero/Header.
+  if (afterBlock && isLockedSectionForReorder(afterBlock) && !beforeBlock) {
+    return null;
+  }
+
+  // Prevent putting anything after locked footer.
+  if (beforeBlock && isLockedSectionForReorder(beforeBlock)) {
+    const beforeName = `${beforeBlock.blockId || ""} ${beforeBlock.blockName || ""}`.toLowerCase();
+    if (beforeName.includes("footer")) return null;
+  }
+
+  // reorderBlocks in your store works by moving/switching current block around target block.
+  // If dropping after a section, target is the section before the insert point.
+  // If dropping before first movable section, target is the first section at that position.
+  return beforeBlock?.blockId || afterBlock?.blockId || null;
+}
+
 export default function EditorLayout() {
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
@@ -343,7 +420,9 @@ export default function EditorLayout() {
     saveToStorage,
     resetEditor,
     addBlockToTemplate,
+    reorderBlocks,
     updateEditable,
+    updateEditableUrl,
     updateCssVar,
     updateClassSwap,
     updateBlockStyle,
@@ -403,6 +482,15 @@ export default function EditorLayout() {
   const handleDragStart = useCallback(
     (e: DragStartEvent) => {
       const id = String(e.active.id);
+      const activeType = e.active.data.current?.type;
+
+      // Existing section drag from Page Sections panel
+      if (activeType === "existing-section") {
+        setDraggingOption(null);
+        setDraggingStandalone(null);
+        updateDropZone(null);
+        return;
+      }
 
       if (isPanelDrag(id)) {
         const groups = buildGroupedBlocksFromTemplates(firestoreTemplates, activeTemplateId);
@@ -443,6 +531,9 @@ export default function EditorLayout() {
   const handleDragEnd = useCallback(
     (e: DragEndEvent) => {
       const activeId = String(e.active.id);
+      const activeType = e.active.data.current?.type;
+      const movingBlockId = e.active.data.current?.blockId as string | undefined;
+
       const lastKnownZone = activeDropZoneRef.current;
       const dndKitOverId = e.over?.id ? String(e.over.id) : null;
       const overId = dndKitOverId ?? lastKnownZone;
@@ -450,6 +541,29 @@ export default function EditorLayout() {
       setDraggingOption(null);
       setDraggingStandalone(null);
       updateDropZone(null);
+
+      // ✅ EXISTING SECTION REORDER
+      // This makes sections from the DragandDrop panel actually drop/reorder.
+      if (activeType === "existing-section") {
+        if (!movingBlockId || !overId) return;
+
+        const blocks = getOrderedBlocks(currentTemplate);
+        const movingBlock = blocks.find((b) => b.blockId === movingBlockId);
+
+        if (!movingBlock) return;
+
+        if (isLockedSectionForReorder(movingBlock)) {
+          alert("Navbar, Hero, Header, and Footer are locked.");
+          return;
+        }
+
+        const targetBlockId = getDropTargetBlockId(blocks, movingBlockId, overId);
+
+        if (!targetBlockId || targetBlockId === movingBlockId) return;
+
+        reorderBlocks(movingBlockId, targetBlockId);
+        return;
+      }
 
       const doAdd = (parsedBlock: any) => {
         if (overId === "drop-before-0") {
@@ -495,7 +609,15 @@ export default function EditorLayout() {
         doAdd(standaloneToParseBlock(found));
       }
     },
-    [addBlockToTemplate, updateDropZone, activeTemplateId, firestoreTemplates, firestoreStandaloneBlocks]
+    [
+      addBlockToTemplate,
+      reorderBlocks,
+      updateDropZone,
+      activeTemplateId,
+      firestoreTemplates,
+      firestoreStandaloneBlocks,
+      currentTemplate,
+    ]
   );
 
   useEffect(() => {
@@ -914,6 +1036,11 @@ export default function EditorLayout() {
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
+      onDragCancel={() => {
+        setDraggingOption(null);
+        setDraggingStandalone(null);
+        updateDropZone(null);
+      }}
     >
       <div className="flex flex-col h-screen overflow-hidden bg-gray-50">
         <nav className="bg-white border-b border-gray-100 px-4 py-3 flex items-center justify-between flex-shrink-0 z-10 shadow-sm">
@@ -1036,6 +1163,7 @@ export default function EditorLayout() {
             pageSettings={pageScripts}
             onPageSettingsChange={handlePageSettingsChange}
             onEditableChange={handleEditableChange}
+            onEditableUrlChange={updateEditableUrl}
             onCssVarChange={handleCssVarChange}
             onClassSwap={handleClassSwap}
             onBlockStyleChange={updateBlockStyle}

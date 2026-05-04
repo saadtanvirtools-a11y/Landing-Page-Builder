@@ -1,4 +1,4 @@
-import { useDroppable } from "@dnd-kit/core";
+import { useDroppable, useDraggable } from "@dnd-kit/core";
 import { useEditorStore } from "../../store/editorStore";
 
 function isLockedSection(block: any): boolean {
@@ -10,12 +10,12 @@ function isLockedSection(block: any): boolean {
     blockId.includes("nav") ||
     blockId.includes("header") ||
     blockId.includes("footer") ||
-    blockId.includes("hero") ||   // ✅ ADDED
+    blockId.includes("hero") ||
     blockName.includes("navbar") ||
     blockName.includes("nav") ||
     blockName.includes("header") ||
     blockName.includes("footer") ||
-    blockName.includes("hero")   // ✅ ADDED
+    blockName.includes("hero")
   );
 }
 
@@ -39,6 +39,44 @@ function DropZoneStrip({ id, isActive }: { id: string; isActive: boolean }) {
           <span>⬇</span> Drop here
         </span>
       )}
+    </div>
+  );
+}
+
+function DraggableSectionCard({
+  block,
+  idx,
+  locked,
+  children,
+}: {
+  block: any;
+  idx: number;
+  locked: boolean;
+  children: React.ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } =
+    useDraggable({
+      id: `section-${block.blockId}`,
+      disabled: locked,
+      data: {
+        type: "existing-section",
+        blockId: block.blockId,
+        index: idx,
+      },
+    });
+
+  const style: React.CSSProperties | undefined = transform
+    ? {
+        transform: `translate3d(${transform.x}px, ${transform.y}px, 0)`,
+        opacity: isDragging ? 0.45 : 1,
+        zIndex: isDragging ? 999 : "auto",
+        position: isDragging ? "relative" : "static",
+      }
+    : undefined;
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes}>
+      <div {...(!locked ? listeners : {})}>{children}</div>
     </div>
   );
 }
@@ -108,113 +146,124 @@ export default function DragandDrop({
 
               return (
                 <div key={block.blockId}>
-                  <div
-                    onClick={() => handleSelectSection(block.blockId)}
-                    className={`flex items-center gap-2 px-3 py-2.5 mx-3 rounded-xl border cursor-pointer transition-all group
-                      ${
-                        isSelected
-                          ? "border-indigo-400 bg-indigo-50 shadow-sm"
-                          : locked
-                          ? "border-amber-200 bg-amber-50/60 hover:border-amber-300"
-                          : "border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/40"
-                      }`}
+                  <DraggableSectionCard
+                    block={block}
+                    idx={idx}
+                    locked={locked}
                   >
-                    <span
-                      className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center shrink-0
+                    <div
+                      onClick={() => handleSelectSection(block.blockId)}
+                      className={`flex items-center gap-2 px-3 py-2.5 mx-3 rounded-xl border transition-all group
+                        ${
+                          locked
+                            ? "cursor-not-allowed"
+                            : "cursor-grab active:cursor-grabbing"
+                        }
                         ${
                           isSelected
-                            ? "bg-indigo-500 text-white"
+                            ? "border-indigo-400 bg-indigo-50 shadow-sm"
                             : locked
-                            ? "bg-amber-100 text-amber-700"
-                            : "bg-gray-100 text-gray-500"
+                            ? "border-amber-200 bg-amber-50/60 hover:border-amber-300"
+                            : "border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/40"
                         }`}
                     >
-                      {idx + 1}
-                    </span>
-
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold text-gray-700 capitalize truncate">
-                        {block.blockName || block.blockId}
-                      </p>
-                      <p className="text-[10px] text-gray-400 truncate">
-                        {block.blockId}
-                      </p>
-                    </div>
-
-                    {locked && (
-                      <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full shrink-0">
-                        🔒
-                      </span>
-                    )}
-
-                    {isSelected && !locked && (
-                      <span className="text-xs bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded-full shrink-0">
-                        ✏️
-                      </span>
-                    )}
-
-                    <div
-                      className={`flex items-center gap-0.5 shrink-0 transition-opacity ${
-                        isSelected
-                          ? "opacity-100"
-                          : "opacity-0 group-hover:opacity-100"
-                      }`}
-                    >
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (canMoveUp) {
-                            reorderBlocks(
-                              block.blockId,
-                              blocks[idx - 1].blockId
-                            );
-                          }
-                        }}
-                        disabled={!canMoveUp}
-                        className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 disabled:opacity-20 text-xs"
+                      <span
+                        className={`w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center shrink-0
+                          ${
+                            isSelected
+                              ? "bg-indigo-500 text-white"
+                              : locked
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-gray-100 text-gray-500"
+                          }`}
                       >
-                        ↑
-                      </button>
+                        {idx + 1}
+                      </span>
 
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (canMoveDown) {
-                            reorderBlocks(
-                              block.blockId,
-                              blocks[idx + 1].blockId
-                            );
-                          }
-                        }}
-                        disabled={!canMoveDown}
-                        className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 disabled:opacity-20 text-xs"
-                      >
-                        ↓
-                      </button>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-semibold text-gray-700 capitalize truncate">
+                          {block.blockName || block.blockId}
+                        </p>
+                        <p className="text-[10px] text-gray-400 truncate">
+                          {block.blockId}
+                        </p>
+                      </div>
 
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
+                      {locked && (
+                        <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full shrink-0">
+                          🔒
+                        </span>
+                      )}
 
-                          if (locked) {
-                            alert(
-                              "Navbar, Hero, Header, and Footer are locked."
-                            );
-                            return;
-                          }
+                      {isSelected && !locked && (
+                        <span className="text-xs bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded-full shrink-0">
+                          ✏️
+                        </span>
+                      )}
 
-                          removeBlockFromTemplate(block.blockId);
-                        }}
-                        className={`p-1 rounded text-xs ${
-                          locked
-                            ? "text-gray-300 cursor-not-allowed"
-                            : "hover:bg-red-50 text-gray-300 hover:text-red-500"
+                      <div
+                        className={`flex items-center gap-0.5 shrink-0 transition-opacity ${
+                          isSelected
+                            ? "opacity-100"
+                            : "opacity-0 group-hover:opacity-100"
                         }`}
                       >
-                        ✕
-                      </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (canMoveUp) {
+                              reorderBlocks(
+                                block.blockId,
+                                blocks[idx - 1].blockId
+                              );
+                            }
+                          }}
+                          disabled={!canMoveUp}
+                          className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 disabled:opacity-20 text-xs"
+                        >
+                          ↑
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (canMoveDown) {
+                              reorderBlocks(
+                                block.blockId,
+                                blocks[idx + 1].blockId
+                              );
+                            }
+                          }}
+                          disabled={!canMoveDown}
+                          className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 disabled:opacity-20 text-xs"
+                        >
+                          ↓
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+
+                            if (locked) {
+                              alert(
+                                "Navbar, Hero, Header, and Footer are locked."
+                              );
+                              return;
+                            }
+
+                            removeBlockFromTemplate(block.blockId);
+                          }}
+                          className={`p-1 rounded text-xs ${
+                            locked
+                              ? "text-gray-300 cursor-not-allowed"
+                              : "hover:bg-red-50 text-gray-300 hover:text-red-500"
+                          }`}
+                        >
+                          ✕
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  </DraggableSectionCard>
 
                   <DropZoneStrip
                     id={`drop-after-${idx}`}

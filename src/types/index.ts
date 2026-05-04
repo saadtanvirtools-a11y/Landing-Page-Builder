@@ -91,6 +91,10 @@ export interface EditableItem {
   styleProps: string;
   styleId: string;
   styleChildSelector?: string;
+
+  // ✅ Used for buttons/links like <a href="#" data-editable-type="text">Shop Now</a>
+  // Text stays editable from content, URL is editable from linkHref.
+  linkHref?: string;
 }
 
 export interface ParsedBlock {
@@ -159,9 +163,6 @@ export interface StandaloneBlock {
   blockName: string;
   blockType: string;
   tier: BlockTier;
-  // ✅ When tier === "custom" → only these user IDs can access
-  // When tier === "free"    → everyone (array ignored)
-  // When tier === "premium" → nobody   (array ignored)
   allowedUserIds: string[];
   cssVariables: CSSVariables;
   editables: EditableItem[];

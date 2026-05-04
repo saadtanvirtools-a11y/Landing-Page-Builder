@@ -46,11 +46,6 @@ export default function EditorPage() {
   useEffect(() => {
     const templateId = fallbackTemplateId;
 
-    console.log("=== [EDITOR PAGE INIT] ===");
-    console.log("[EditorPage] routeTemplateId:", routeTemplateId);
-    console.log("[EditorPage] final templateId:", templateId);
-    console.log("[EditorPage] user.id:", user?.id);
-
     if (!templateId) {
       resetEditor();
       setStatus("not-assigned");
@@ -74,7 +69,7 @@ export default function EditorPage() {
 
           if (!cancelled && loadedTemplate?.id === templateId) {
             setStatus("ready");
-            console.log("[EditorPage] Loaded saved project:", templateId);
+           
             return;
           }
         } catch (e) {
@@ -93,7 +88,6 @@ export default function EditorPage() {
 
       loadTemplate(found);
       setStatus("ready");
-      console.log("[EditorPage] Loaded fresh template:", templateId);
     };
 
     init();

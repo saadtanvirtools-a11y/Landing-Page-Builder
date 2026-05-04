@@ -171,6 +171,7 @@ interface Props {
   pageSettings: PageScripts;
   onPageSettingsChange: (data: Partial<PageScripts>) => void;
   onEditableChange: (editableId: string, newContent: string) => void;
+  onEditableUrlChange: (editableId: string, newUrl: string) => void;
   onCssVarChange: (varName: string, newValue: string) => void;
   onClassSwap: (editableId: string, newClassList: string) => void;
   onBlockStyleChange: (blockId: string, styleKey: string, value: string) => void;
@@ -285,13 +286,15 @@ function TextArea({
 function LinkField({
   value,
   onChange,
+  placeholder = "https://example.com",
 }: {
   value: string;
   onChange: (v: string) => void;
+  placeholder?: string;
 }) {
   return (
     <div className="space-y-2.5">
-      <TextInput value={value} onChange={onChange} placeholder="https://example.com" />
+      <TextInput value={value} onChange={onChange} placeholder={placeholder} />
       {value && (
         <a
           href={value}
@@ -649,6 +652,7 @@ function PageSettingsSection({
   return (
     <AccordionSection icon="🌐" title="Page Settings" defaultOpen={true}>
       <div className="space-y-3">
+
         <div>
           <FieldLabel>Page Title</FieldLabel>
           <TextInput
@@ -672,9 +676,28 @@ function PageSettingsSection({
           <ImageField
             value={pageSettings.faviconUrl || ""}
             onChange={(v) => onPageSettingsChange({ faviconUrl: v })}
-            uploadLabel="Upload favicon"
           />
         </div>
+
+        {/* 🔥 ADD THIS */}
+        <div>
+          <FieldLabel>Head Scripts</FieldLabel>
+          <TextArea
+            value={pageSettings.headScripts || ""}
+            onChange={(v) => onPageSettingsChange({ headScripts: v })}
+            rows={6}
+          />
+        </div>
+
+        <div>
+          <FieldLabel>Body Scripts</FieldLabel>
+          <TextArea
+            value={pageSettings.bodyScripts || ""}
+            onChange={(v) => onPageSettingsChange({ bodyScripts: v })}
+            rows={6}
+          />
+        </div>
+
       </div>
     </AccordionSection>
   );
@@ -686,12 +709,14 @@ function PageSettingsSection({
 function EditableCard({
   item,
   onEditableChange,
+  onEditableUrlChange,
   onCssVarChange,
   onClassSwap,
   resolveLiveColor,
 }: {
   item: EditableItem;
   onEditableChange: (id: string, v: string) => void;
+  onEditableUrlChange: (id: string, v: string) => void;
   onCssVarChange: (varName: string, v: string) => void;
   onClassSwap: (id: string, cls: string) => void;
   resolveLiveColor: (varName: string) => string;
@@ -719,6 +744,7 @@ function EditableCard({
   const isLink = item.type === "link";
   const isSvg = item.type === "svg" || contentIsSvg;
   const isTextLike = item.type === "text" || item.type === "link";
+  const hasEditableUrl = typeof item.linkHref === "string";
 
   return (
     <div className="rounded-2xl border border-slate-200 overflow-hidden bg-white shadow-[0_4px_14px_rgba(15,23,42,0.04)]">
@@ -778,6 +804,20 @@ function EditableCard({
               <TextInput value={item.content} onChange={(v) => onEditableChange(item.id, v)} />
             )}
           </div>
+
+          {hasEditableUrl && (
+            <div className="space-y-2.5 rounded-2xl border border-indigo-100 bg-indigo-50/40 p-3">
+              <FieldLabel>Button / Link URL</FieldLabel>
+              <LinkField
+                value={item.linkHref || ""}
+                onChange={(v) => onEditableUrlChange(item.id, v)}
+                placeholder="https://example.com or #section"
+              />
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                This updates the actual href for this button/link. Button text stays editable above.
+              </p>
+            </div>
+          )}
 
           {isTextLike && !isSvg && (
             <div className="space-y-2.5">
@@ -1045,6 +1085,7 @@ export default function PropertiesPanel({
   pageSettings,
   onPageSettingsChange,
   onEditableChange,
+  onEditableUrlChange,
   onCssVarChange,
   onClassSwap,
   onBlockStyleChange,
@@ -1112,6 +1153,7 @@ export default function PropertiesPanel({
                     key={item.id}
                     item={item}
                     onEditableChange={onEditableChange}
+                    onEditableUrlChange={onEditableUrlChange}
                     onCssVarChange={onCssVarChange}
                     onClassSwap={onClassSwap}
                     resolveLiveColor={resolveLiveColor}
@@ -1127,6 +1169,7 @@ export default function PropertiesPanel({
                     key={item.id}
                     item={item}
                     onEditableChange={onEditableChange}
+                    onEditableUrlChange={onEditableUrlChange}
                     onCssVarChange={onCssVarChange}
                     onClassSwap={onClassSwap}
                     resolveLiveColor={resolveLiveColor}
@@ -1142,6 +1185,7 @@ export default function PropertiesPanel({
                     key={item.id}
                     item={item}
                     onEditableChange={onEditableChange}
+                    onEditableUrlChange={onEditableUrlChange}
                     onCssVarChange={onCssVarChange}
                     onClassSwap={onClassSwap}
                     resolveLiveColor={resolveLiveColor}

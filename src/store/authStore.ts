@@ -67,9 +67,9 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       localStorage.setItem("user", JSON.stringify(freshUser));
       set({ user: freshUser });
 
-      console.log("[Auth] ✅ User refreshed from Firestore");
+  
     } catch (err) {
-      console.error("[Auth] ❌ Failed to refresh user:", err);
+    
     }
   },
 }));
